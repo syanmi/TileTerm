@@ -41,12 +41,41 @@
 
 `TerminalCanvas`（`FrameworkElement` を継承したカスタムコントロール、`src/TileTerm/Terminal/TerminalCanvas.cs`）が `XTerm.Terminal.Buffer` を1セルずつ読み取り、`DrawingContext.DrawText` で等幅フォント(Consolas)のグリッドとして描画している。256色/RGBカラーの変換は `AnsiPalette.cs` に実装。現状は「まず正しく動く」を優先したシンプルな逐セル描画で、パフォーマンス最適化（同一属性の連続セルをまとめて1回のDrawTextにする等）は未実施。
 
+## アーキテクチャ（M2時点）
+
+### ペイン分割（`PaneTree.cs` / `PaneManager.cs`）
+
+RLoginのような「1ウィンドウを好きなだけ分割する」レイアウトは、二分木で表現している。
+
+- `LeafNode` = 1枚の実ペイン（`TerminalPaneControl` を保持）
+- `SplitNode` = 領域を2つに分けるノード（`Direction: Right/Down`、`First`/`Second`の子、実際の分割線を描画する`Grid`(+`GridSplitter`)を保持）
+- `PaneManager` がこの木を操作する唯一の場所: `Split(leaf, direction, profile)` で対象ペインを新しい`SplitNode`に置き換え、`Close(leaf)` で対象を取り除いてその兄弟を親の位置に昇格させる（木の畳み込み）
+
+**ハマった実装バグとその教訓**: `Split`/`Close`共通の「子ノードを差し替える」ヘルパーの中で毎回「古い要素をVisualツリーから外す」処理を呼んでいたところ、`Split`では呼び出し側が対象を*先に*新しいGridへ move 済みだったため、この内部の「外す」処理が「新しい(正しい)親」から誤って外してしまい、該当ペインが描画されない不具合が起きた（分割で3ペイン目を作ると、そのうち1ペインが真っ黒になる形で顕在化）。**WPFの要素は同時に1つの親しか持てないため、「要素を動かす」コードを書くときは、どの時点で・どの親から・何が誰の責任で外すのかを一箇所に集約し、二重に外そうとしないこと。**動作確認（実機でのペイン分割・入力テスト）をしなければ気づけなかった類のバグなので、UIレイアウトを操作するコードは必ずビルド後に実際に操作して確認する。
+
+### プロファイル管理（`ProfileStore.cs` / `ProfileSettingsWindow.cs`）
+
+- 保存先: `%AppData%\TileTerm\profiles.json`（JSON、`System.Text.Json`）
+- 初回起動時、このマシンに実在するアプリだけを自動検出してデフォルトプロファイルを作る: Command Prompt(常時) / Windows PowerShell(`System32`にあれば) / Git Bash(`C:\Program Files\Git\bin\bash.exe`があれば、`--login -i`付き) / Claude Code(`PATH`上に`claude`があれば)
+- 設定UI(`ProfileSettingsWindow`)からプロファイルの追加・編集・削除が可能。「設定」ボタンはメイン画面上部のツールバーから開く
+- **ハマったポイント**: npmでインストールされるCLI等は `.exe` ではなく `.cmd`/`.bat` シムであることが多く、ConPTY(CreateProcess)は`.cmd`/`.bat`を直接起動できない。`ProcessLaunchResolver.cs` で拡張子が`.cmd`/`.bat`なら自動的に `cmd.exe /c <path> <args>` に置き換えることで対応している
+
+### 新規セッション作成（分割）のUI
+
+各ペインのヘッダーに「分割→」「分割↓」「×」ボタンがある。分割ボタンを押すと、その時点の`ProfileStore.Profiles`一覧がコンテキストメニューとして出て、選んだプロファイルで新しいペインが分割方向に開く。プロファイルを設定で追加すれば、次にメニューを開いたときにすぐ選択肢に反映される（アプリ再起動不要）。
+
 ## マイルストーン進捗
 
 - ✅ **M1: 単一ターミナルが動くところまで**（2026-09-08 完了）
   - `dotnet new sln` / `dotnet new wpf` でプロジェクト作成
   - ConPTY(Porta.Pty) + XTerm.NET で cmd.exe を1セッション起動し、実際にキー入力・画面描画（日本語ディレクトリ名を含む `dir` コマンド出力等）が正しく動作することをビルド後に実機で確認済み
   - 起動するプロファイルは `ProfileDefinition.Default`（cmd.exe固定）にハードコードされている
+
+- ✅ **M2: コンセプト機能一式**（2026-09-08 完了）
+  - ペイン分割UI（右/下split、ネスト分割、close時の木の畳み込み）を実装
+  - プロファイル設定UI＋`profiles.json`永続化、初回起動時のデフォルトプロファイル自動検出を実装
+  - 実機で以下を確認済み: 右split(Command Prompt + Git Bash、互いに独立してキー入力が届く)、既存ペインの下split(3ペインのネスト表示)、ペインを閉じたときのレイアウト再構成、設定画面でのプロファイル一覧表示・選択・フォーム反映、**Claude Code CLI (`claude`) を実際にペイン内で起動し、TUIの確認画面が正しく描画されることまで確認**（コンセプトで名指しされていた4つの対象アプリ: cmd/PowerShell/Git-bash/claude、すべて動作確認済み）
+  - 動作確認はSendKeysではなく`PrintWindow`(DWM合成中でも取得できる)によるキャプチャと、UI Automationの`InvokePattern`によるボタン操作で行った。**このデスクトップ環境では`SetForegroundWindow`や合成`SendKeys`によるウィンドウのフォアグラウンド化が信頼できず**（他のウィンドウにフォーカスを奪われる／`GetWindowRect`で取れる座標へ実際にクリックしても別ウィンドウに当たる等）、UI Automation経由の操作とPrintWindowでのキャプチャの組み合わせが安定して機能した。今後この手のUI自動確認をする際はこの方式を使うこと。
 
 ## 動作確認用スクリプト
 
@@ -55,13 +84,16 @@
 - 実行内容: `dotnet build TileTerm.sln -c Debug` → 成功したら `src/TileTerm/bin/Debug/net9.0-windows/TileTerm.exe` を起動 → アプリを閉じるとexit codeを表示して`pause`
 - **バッチファイル内のメッセージは意図的に英語(ASCII)にしている**: 日本語(UTF-8)で書いたところ、cmd.exeの既定コードページ(Shift-JIS)との不一致でコマンド自体が文字化けし、`chcp 65001`を先頭に置いても解決しなかったため。今後このファイルを編集する際も日本語は使わないこと。
 
-## 未実装（次のマイルストーン候補）
+## 未実装（コンセプト自体には含まれない、品質・UX向上の候補）
 
-- ペイン分割UI（RLoginのような画面分割・複数セッション同時表示）
-- プロファイル設定UI・設定ファイルの永続化（.exe パス・引数をユーザーがGUI上で登録・選択）
-- レンダリングのパフォーマンス最適化（同一属性セルのランまとめ、キャッシュ等）
+コンセプトで挙げられていた機能（画面分割・複数セッション・任意のコンソールアプリをプロファイルで設定可能）はM2で一通り動作するところまで実装済み。以下は今後の改善候補:
+
+- レンダリングのパフォーマンス最適化（同一属性の連続セルをまとめて1回のDrawTextにする、色/フォントのBrush/Typefaceをキャッシュする等。現状は逐セル毎回生成でCPU負荷が高め）
 - Bold/Underline/Inverse 以外のテキスト属性（Italic, Dim, Strikethrough, Blink, Overline）の描画
 - ウィンドウリサイズ以外のきっかけ（DPI変更等）でのセルメトリクス再計算
+- ペインの分割比率・レイアウトの保存/復元（現状は再起動すると単一ペインに戻る）
+- プロファイルへのアイコン/色設定、複数ウィンドウ対応、タブ機能
+- 閉じる際の確認ダイアログ（誤ってプロセスを終了させてしまうことがある）
 
 ## 名前の由来・検討経緯
 

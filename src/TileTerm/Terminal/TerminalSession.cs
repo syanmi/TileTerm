@@ -48,11 +48,12 @@ public sealed class TerminalSession : IDisposable
 
     public async Task StartAsync(ProfileDefinition profile)
     {
+        var (exe, args) = ProcessLaunchResolver.Resolve(profile);
         var options = new PtyOptions
         {
             Name = profile.Name,
-            App = profile.Executable,
-            CommandLine = profile.Arguments,
+            App = exe,
+            CommandLine = args,
             Cwd = profile.WorkingDirectory ?? Environment.CurrentDirectory,
             Cols = Terminal.Cols,
             Rows = Terminal.Rows,
