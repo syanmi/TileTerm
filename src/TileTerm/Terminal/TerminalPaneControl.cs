@@ -8,10 +8,11 @@ using System.Windows.Media;
 namespace TileTerm.Terminal;
 
 /// <summary>
-/// One visible pane: a thin header (profile name + split/close buttons) over
-/// a <see cref="TerminalCanvas"/>, plus the <see cref="TerminalSession"/> that
-/// backs it. This is the leaf-level building block <see cref="PaneManager"/>
-/// arranges into a splittable grid.
+/// One visible pane: a thin title bar (profile name + restart/close buttons)
+/// over a <see cref="TerminalCanvas"/>, plus the <see cref="TerminalSession"/>
+/// that backs it. This is the leaf-level building block <see cref="PaneManager"/>
+/// arranges into a splittable grid. Splitting itself is driven from the main
+/// window's own title bar (see <see cref="MainWindow"/>), not from here.
 /// </summary>
 public sealed class TerminalPaneControl : Grid
 {
@@ -25,13 +26,10 @@ public sealed class TerminalPaneControl : Grid
     /// <summary>Raised when this pane's terminal receives keyboard focus.</summary>
     public event Action? Activated;
 
-    /// <summary>Raised when the user picks a profile from a split button's menu.</summary>
-    public event Action<SplitDirection, ProfileDefinition>? SplitRequested;
-
     /// <summary>Raised when the user clicks the close ("×") button.</summary>
     public event Action? CloseRequested;
 
-    public TerminalPaneControl(ProfileDefinition profile, ProfileStore profileStore)
+    public TerminalPaneControl(ProfileDefinition profile)
     {
         Profile = profile;
 
@@ -47,7 +45,7 @@ public sealed class TerminalPaneControl : Grid
             Text = profile.Name,
         };
 
-        var header = BuildHeader(profileStore);
+        var header = BuildHeader();
         SetRow(header, 0);
         Children.Add(header);
 
@@ -74,7 +72,7 @@ public sealed class TerminalPaneControl : Grid
         Loaded += OnLoaded;
     }
 
-    private FrameworkElement BuildHeader(ProfileStore profileStore)
+    private FrameworkElement BuildHeader()
     {
         var panel = new DockPanel
         {
@@ -83,22 +81,16 @@ public sealed class TerminalPaneControl : Grid
         };
 
         var closeButton = MakeButton("×");
-        closeButton.ToolTip = "このペインを閉じる";
+        closeButton.ToolTip = "このタイルを閉じる";
         closeButton.Click += (_, _) => CloseRequested?.Invoke();
         DockPanel.SetDock(closeButton, Dock.Right);
         panel.Children.Add(closeButton);
 
-        var splitDownButton = MakeButton("分割↓");
-        splitDownButton.ToolTip = "下に分割して新しいセッションを開く";
-        splitDownButton.Click += (_, _) => ShowProfileMenu(splitDownButton, profileStore, SplitDirection.Down);
-        DockPanel.SetDock(splitDownButton, Dock.Right);
-        panel.Children.Add(splitDownButton);
-
-        var splitRightButton = MakeButton("分割→");
-        splitRightButton.ToolTip = "右に分割して新しいセッションを開く";
-        splitRightButton.Click += (_, _) => ShowProfileMenu(splitRightButton, profileStore, SplitDirection.Right);
-        DockPanel.SetDock(splitRightButton, Dock.Right);
-        panel.Children.Add(splitRightButton);
+        var refreshButton = MakeButton("更新");
+        refreshButton.ToolTip = "このタイルのコンソールを再起動";
+        refreshButton.Click += (_, _) => RestartSession();
+        DockPanel.SetDock(refreshButton, Dock.Right);
+        panel.Children.Add(refreshButton);
 
         panel.Children.Add(_titleText);
         return panel;
@@ -115,26 +107,16 @@ public sealed class TerminalPaneControl : Grid
         FontSize = 11,
     };
 
-    private void ShowProfileMenu(Button anchor, ProfileStore profileStore, SplitDirection direction)
-    {
-        var menu = new ContextMenu();
-        foreach (var p in profileStore.Profiles)
-        {
-            var item = new MenuItem { Header = p.Name };
-            item.Click += (_, _) => SplitRequested?.Invoke(direction, p);
-            menu.Items.Add(item);
-        }
-        if (menu.Items.Count == 0)
-            menu.Items.Add(new MenuItem { Header = "(プロファイルがありません。設定から追加してください)", IsEnabled = false });
-
-        anchor.ContextMenu = menu;
-        menu.IsOpen = true;
-    }
-
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         Loaded -= OnLoaded;
+        await StartSessionAsync();
+    }
 
+    /// <summary>(Re)creates the session and wires it up to the canvas. Used both for the
+    /// initial launch and for the "更新" (restart) button.</summary>
+    private async System.Threading.Tasks.Task StartSessionAsync()
+    {
         var (cols, rows) = _canvas.MeasureCells(new Size(_canvas.ActualWidth, _canvas.ActualHeight));
         Session = new TerminalSession(cols, rows);
         _canvas.Terminal = Session.Terminal;
@@ -142,6 +124,7 @@ public sealed class TerminalPaneControl : Grid
         Session.OutputReceived += () => Dispatcher.BeginInvoke(() => _canvas.InvalidateVisual());
         Session.Exited += code => Dispatcher.BeginInvoke(() => _titleText.Text = $"{Profile.Name} (終了 code={code})");
 
+        _titleText.Text = Profile.Name;
         _canvas.Focus();
 
         try
@@ -154,6 +137,16 @@ public sealed class TerminalPaneControl : Grid
                 Window.GetWindow(this), $"セッションの起動に失敗しました:\n{Profile.Executable}\n\n{ex.Message}",
                 "TileTerm", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private async void RestartSession()
+    {
+        Session?.Dispose();
+        Session = null;
+        _canvas.Terminal = null;
+        _canvas.InvalidateVisual();
+
+        await StartSessionAsync();
     }
 
     public void SetActive(bool active) =>

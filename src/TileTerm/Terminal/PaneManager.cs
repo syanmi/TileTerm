@@ -16,19 +16,29 @@ namespace TileTerm.Terminal;
 public sealed class PaneManager
 {
     private readonly ContentControl _host;
-    private readonly ProfileStore _profileStore;
     private PaneNode _root;
     private LeafNode? _active;
 
-    public PaneManager(ContentControl host, ProfileStore profileStore, ProfileDefinition initialProfile)
+    public PaneManager(ContentControl host, ProfileDefinition initialProfile)
     {
         _host = host;
-        _profileStore = profileStore;
 
         var initialLeaf = CreateLeaf(initialProfile);
         _root = initialLeaf;
         _host.Content = initialLeaf.Visual;
         SetActive(initialLeaf);
+    }
+
+    /// <summary>Splits whichever pane is currently active. No-op if there is somehow no active pane.</summary>
+    public void SplitActive(SplitDirection direction, ProfileDefinition profile)
+    {
+        if (_active is not null) Split(_active, direction, profile);
+    }
+
+    /// <summary>Closes whichever pane is currently active.</summary>
+    public void CloseActive()
+    {
+        if (_active is not null) Close(_active);
     }
 
     /// <summary>Splits <paramref name="target"/>'s area, opening a new session next to it.</summary>
@@ -109,10 +119,9 @@ public sealed class PaneManager
 
     private LeafNode CreateLeaf(ProfileDefinition profile)
     {
-        var control = new TerminalPaneControl(profile, _profileStore);
+        var control = new TerminalPaneControl(profile);
         var leaf = new LeafNode(control);
         control.Activated += () => SetActive(leaf);
-        control.SplitRequested += (dir, p) => Split(leaf, dir, p);
         control.CloseRequested += () => Close(leaf);
         return leaf;
     }
