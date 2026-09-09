@@ -1,9 +1,11 @@
 using System;
 using System.Text;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using TileTerm;
 
 namespace TileTerm.Terminal;
 
@@ -80,14 +82,16 @@ public sealed class TerminalPaneControl : Grid
             LastChildFill = true,
         };
 
-        var closeButton = MakeButton("×");
+        var closeButton = MakeButton(Icons.Close(13));
         closeButton.ToolTip = "このタイルを閉じる";
+        AutomationProperties.SetName(closeButton, "このタイルを閉じる");
         closeButton.Click += (_, _) => CloseRequested?.Invoke();
         DockPanel.SetDock(closeButton, Dock.Right);
         panel.Children.Add(closeButton);
 
-        var refreshButton = MakeButton("更新");
+        var refreshButton = MakeButton(Icons.Refresh());
         refreshButton.ToolTip = "このタイルのコンソールを再起動";
+        AutomationProperties.SetName(refreshButton, "このタイルのコンソールを再起動");
         refreshButton.Click += (_, _) => RestartSession();
         DockPanel.SetDock(refreshButton, Dock.Right);
         panel.Children.Add(refreshButton);
@@ -96,15 +100,14 @@ public sealed class TerminalPaneControl : Grid
         return panel;
     }
 
-    private static Button MakeButton(string text) => new()
+    private static Button MakeButton(object content) => new()
     {
-        Content = text,
-        Padding = new Thickness(6, 2, 6, 2),
+        Content = content,
+        Padding = new Thickness(7, 4, 7, 4),
         Margin = new Thickness(1),
         Background = Brushes.Transparent,
         BorderThickness = new Thickness(0),
         Foreground = Brushes.Gainsboro,
-        FontSize = 11,
     };
 
     private async void OnLoaded(object sender, RoutedEventArgs e)

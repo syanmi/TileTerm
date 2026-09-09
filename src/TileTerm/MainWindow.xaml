@@ -7,21 +7,20 @@
         WindowStyle="None" ResizeMode="CanResize">
 
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="32" ResizeBorderThickness="4" GlassFrameThickness="0" CornerRadius="0" />
+        <WindowChrome CaptionHeight="34" ResizeBorderThickness="4" GlassFrameThickness="0" CornerRadius="0" />
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
         <Style x:Key="TitleBarButtonBase" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="Gainsboro" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="Padding" Value="10,0" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Bd" Background="{TemplateBinding Background}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -33,7 +32,14 @@
             </Setter>
         </Style>
         <Style x:Key="TitleBarButton" TargetType="Button" BasedOn="{StaticResource TitleBarButtonBase}" />
-        <Style x:Key="TitleBarCloseButton" TargetType="Button" BasedOn="{StaticResource TitleBarButtonBase}">
+
+        <!-- Minimize/maximize/close: fixed-width like a normal app's caption buttons, full title-bar height. -->
+        <Style x:Key="WindowControlButton" TargetType="Button" BasedOn="{StaticResource TitleBarButtonBase}">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+        </Style>
+        <Style x:Key="TitleBarCloseButton" TargetType="Button" BasedOn="{StaticResource WindowControlButton}">
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -53,7 +59,7 @@
 
     <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
-            <RowDefinition Height="32" />
+            <RowDefinition Height="34" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -72,26 +78,29 @@
             </Grid.ColumnDefinitions>
 
             <TextBlock Grid.Column="0" Text="&#9638;" Foreground="DodgerBlue" FontSize="14"
-                       Width="32" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                       Width="34" VerticalAlignment="Center" HorizontalAlignment="Center" />
 
-            <Button x:Name="SplitRightButton" Grid.Column="1" Content="分割→" Style="{StaticResource TitleBarButton}"
-                    ToolTip="アクティブなタイルを右に分割" shell:WindowChrome.IsHitTestVisibleInChrome="True" />
-            <Button x:Name="SplitDownButton" Grid.Column="2" Content="分割↓" Style="{StaticResource TitleBarButton}"
-                    ToolTip="アクティブなタイルを下に分割" shell:WindowChrome.IsHitTestVisibleInChrome="True" />
-            <Button x:Name="CloseTileButton" Grid.Column="3" Content="タイルを閉じる" Style="{StaticResource TitleBarButton}"
-                    ToolTip="アクティブなタイルを閉じる" shell:WindowChrome.IsHitTestVisibleInChrome="True" />
+            <Button x:Name="SplitRightButton" Grid.Column="1" Style="{StaticResource TitleBarButton}"
+                    ToolTip="アクティブなタイルを右に分割" AutomationProperties.Name="アクティブなタイルを右に分割"
+                    shell:WindowChrome.IsHitTestVisibleInChrome="True" />
+            <Button x:Name="SplitDownButton" Grid.Column="2" Style="{StaticResource TitleBarButton}"
+                    ToolTip="アクティブなタイルを下に分割" AutomationProperties.Name="アクティブなタイルを下に分割"
+                    shell:WindowChrome.IsHitTestVisibleInChrome="True" />
+            <Button x:Name="CloseTileButton" Grid.Column="3" Style="{StaticResource TitleBarButton}"
+                    ToolTip="アクティブなタイルを閉じる" AutomationProperties.Name="アクティブなタイルを閉じる"
+                    shell:WindowChrome.IsHitTestVisibleInChrome="True" />
             <Button x:Name="SettingsButton" Grid.Column="4" Content="設定..." Style="{StaticResource TitleBarButton}"
                     shell:WindowChrome.IsHitTestVisibleInChrome="True" />
 
             <TextBlock Grid.Column="5" Text="TileTerm" Foreground="Gray" FontSize="11"
                        VerticalAlignment="Center" Margin="10,0,0,0" IsHitTestVisible="False" />
 
-            <Button x:Name="MinimizeButton" Grid.Column="6" Content="_" Style="{StaticResource TitleBarButton}"
-                    shell:WindowChrome.IsHitTestVisibleInChrome="True" />
-            <Button x:Name="MaximizeButton" Grid.Column="7" Content="□" Style="{StaticResource TitleBarButton}"
-                    shell:WindowChrome.IsHitTestVisibleInChrome="True" />
-            <Button x:Name="CloseWindowButton" Grid.Column="8" Content="✕" Style="{StaticResource TitleBarCloseButton}"
-                    shell:WindowChrome.IsHitTestVisibleInChrome="True" />
+            <Button x:Name="MinimizeButton" Grid.Column="6" Style="{StaticResource WindowControlButton}"
+                    ToolTip="最小化" AutomationProperties.Name="最小化" shell:WindowChrome.IsHitTestVisibleInChrome="True" />
+            <Button x:Name="MaximizeButton" Grid.Column="7" Style="{StaticResource WindowControlButton}"
+                    ToolTip="最大化" AutomationProperties.Name="最大化" shell:WindowChrome.IsHitTestVisibleInChrome="True" />
+            <Button x:Name="CloseWindowButton" Grid.Column="8" Style="{StaticResource TitleBarCloseButton}"
+                    ToolTip="閉じる" AutomationProperties.Name="閉じる" shell:WindowChrome.IsHitTestVisibleInChrome="True" />
         </Grid>
 
         <ContentControl x:Name="PaneHost" Grid.Row="1" />

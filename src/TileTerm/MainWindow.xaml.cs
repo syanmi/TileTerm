@@ -18,11 +18,19 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        SplitRightButton.Content = Icons.SplitRight();
+        SplitDownButton.Content = Icons.SplitDown();
+        CloseTileButton.Content = Icons.Close(14);
+        MinimizeButton.Content = Icons.Minimize();
+        MaximizeButton.Content = Icons.Maximize();
+        CloseWindowButton.Content = Icons.Close();
+
         Loaded += OnLoaded;
         Closing += OnClosing;
         StateChanged += (_, _) =>
         {
-            MaximizeButton.Content = WindowState == WindowState.Maximized ? "❐" : "□";
+            MaximizeButton.Content = WindowState == WindowState.Maximized ? Icons.Restore() : Icons.Maximize();
             // WindowChrome still counts the (now invisible) resize border + non-client frame
             // as part of the window when maximized, which clips a few pixels off every edge.
             // Pad the content back in by that same amount only while maximized (standard
