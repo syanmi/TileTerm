@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using TileTerm.Terminal;
@@ -5,33 +6,50 @@ using TileTerm.Terminal;
 namespace TileTerm;
 
 /// <summary>
-/// Lets the user view/add/edit/remove the profiles (.exe path + arguments)
-/// that "New Session"/split menus offer. Backed by <see cref="ProfileStore"/>,
-/// which persists to <c>%AppData%\TileTerm\profiles.json</c>.
+/// The app's settings dialog. Has a category sidebar on the left (only
+/// "プロンプト" exists today, but the structure leaves room for more) and,
+/// for that category, the profile list + editor on the right: add/edit/remove
+/// profiles, pick which one is the 既定 (default), and mark any number of
+/// them as お気に入り (favorites). Backed by <see cref="ProfileStore"/>, which
+/// persists to <c>%AppData%\TileTerm\profiles.json</c>.
 /// </summary>
-public sealed class ProfileSettingsWindow : Window
+public sealed class SettingsWindow : Window
 {
     private readonly ProfileStore _store;
-    private readonly ListBox _list = new() { DisplayMemberPath = "Name" };
+    private readonly ListBox _list = new();
     private readonly TextBox _nameBox = new();
+    private readonly TextBox _iconBox = new();
     private readonly TextBox _exeBox = new();
     private readonly TextBox _argsBox = new();
     private readonly TextBox _cwdBox = new();
+    private readonly Button _defaultButton = new() { Padding = new Thickness(8, 3, 8, 3), HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly CheckBox _favoriteCheck = new() { Content = "お気に入りに登録（タイトルバーにボタンが表示されます）", Margin = new Thickness(0, 10, 0, 0) };
     private ProfileDefinition? _editing;
+    private bool _suppressToggleEvents;
 
-    public ProfileSettingsWindow(ProfileStore store)
+    public SettingsWindow(ProfileStore store)
     {
         _store = store;
-        Title = "TileTerm - プロファイル設定";
-        Width = 640;
-        Height = 420;
+        Title = "TileTerm - 設定";
+        Width = 760;
+        Height = 460;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         var root = new Grid { Margin = new Thickness(10) };
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(200) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
+        // Category sidebar — just one category today; structured so more can be added later.
+        var categoryList = new ListBox { BorderThickness = new Thickness(0) };
+        categoryList.Items.Add("プロンプト");
+        categoryList.SelectedIndex = 0;
+        Grid.SetColumn(categoryList, 0);
+        root.Children.Add(categoryList);
+
+        // Profile list for the "プロンプト" category.
         var leftPanel = new DockPanel();
         var listButtons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
         var addButton = new Button { Content = "追加", Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 0, 4, 0) };
@@ -41,11 +59,13 @@ public sealed class ProfileSettingsWindow : Window
         DockPanel.SetDock(listButtons, Dock.Bottom);
         leftPanel.Children.Add(listButtons);
         leftPanel.Children.Add(_list);
-        Grid.SetColumn(leftPanel, 0);
+        Grid.SetColumn(leftPanel, 2);
         root.Children.Add(leftPanel);
 
+        // Editor for the selected profile.
         var form = new StackPanel();
         form.Children.Add(LabeledBox("名前", _nameBox));
+        form.Children.Add(LabeledBox("表示アイコン（絵文字や \"PS\" のような短い文字列。空欄なら名前の頭文字）", _iconBox));
         form.Children.Add(LabeledBoxWithBrowse("実行ファイル (.exe / .cmd / .bat)", _exeBox));
         form.Children.Add(LabeledBox("引数（スペース区切り。空白を含む場合は \"...\" で囲む）", _argsBox));
         form.Children.Add(LabeledBox("作業ディレクトリ（空欄ならユーザーフォルダ）", _cwdBox));
@@ -53,20 +73,33 @@ public sealed class ProfileSettingsWindow : Window
         var saveButton = new Button
         {
             Content = "保存", Padding = new Thickness(10, 4, 10, 4),
-            Margin = new Thickness(0, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 4, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
         };
         saveButton.Click += OnSave;
         form.Children.Add(saveButton);
 
+        form.Children.Add(new Separator { Margin = new Thickness(0, 14, 0, 10) });
+
+        _defaultButton.Content = "既定のプロンプトにする";
+        _defaultButton.Click += (_, _) =>
+        {
+            if (_editing is not null) { _store.SetDefault(_editing); Refresh(); }
+        };
+        form.Children.Add(_defaultButton);
+
+        _favoriteCheck.Checked += (_, _) => OnFavoriteToggled(true);
+        _favoriteCheck.Unchecked += (_, _) => OnFavoriteToggled(false);
+        form.Children.Add(_favoriteCheck);
+
         var closeButton = new Button
         {
             Content = "閉じる", Padding = new Thickness(10, 4, 10, 4),
-            Margin = new Thickness(0, 8, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 18, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
         };
         closeButton.Click += (_, _) => Close();
         form.Children.Add(closeButton);
 
-        Grid.SetColumn(form, 2);
+        Grid.SetColumn(form, 4);
         root.Children.Add(form);
 
         Content = root;
@@ -115,39 +148,55 @@ public sealed class ProfileSettingsWindow : Window
 
     private void AddNew()
     {
-        var profile = new ProfileDefinition { Name = "新しいプロファイル" };
-        _store.Profiles.Add(profile);
-        _store.Save();
+        var profile = new ProfileDefinition { Name = "新しいプロンプト" };
+        _store.AddProfile(profile);
         Refresh();
-        _list.SelectedItem = profile;
+        SelectRowFor(profile);
     }
 
     private void RemoveSelected()
     {
-        if (_list.SelectedItem is not ProfileDefinition p) return;
-        _store.Profiles.Remove(p);
-        _store.Save();
+        if ((_list.SelectedItem as ProfileRow)?.Profile is not { } profile) return;
+        _store.RemoveProfile(profile);
+        _editing = null;
         Refresh();
     }
 
     private void LoadSelected()
     {
-        _editing = _list.SelectedItem as ProfileDefinition;
+        _editing = (_list.SelectedItem as ProfileRow)?.Profile;
+
+        _suppressToggleEvents = true;
         _nameBox.Text = _editing?.Name ?? "";
+        _iconBox.Text = _editing?.Icon ?? "";
         _exeBox.Text = _editing?.Executable ?? "";
         _argsBox.Text = _editing is null ? "" : CommandLineText.Join(_editing.Arguments);
         _cwdBox.Text = _editing?.WorkingDirectory ?? "";
+
+        bool hasSelection = _editing is not null;
+        _defaultButton.IsEnabled = hasSelection && _store.GetDefaultProfile() != _editing;
+        _favoriteCheck.IsEnabled = hasSelection;
+        _favoriteCheck.IsChecked = hasSelection && _store.IsFavorite(_editing!);
+        _suppressToggleEvents = false;
+    }
+
+    private void OnFavoriteToggled(bool isFavorite)
+    {
+        if (_suppressToggleEvents || _editing is null) return;
+        _store.SetFavorite(_editing, isFavorite);
+        Refresh();
     }
 
     private void OnSave(object sender, RoutedEventArgs e)
     {
         if (_editing is null)
         {
-            MessageBox.Show(this, "編集するプロファイルをリストから選択するか、「追加」してください。", "TileTerm");
+            MessageBox.Show(this, "編集するプロンプトをリストから選択するか、「追加」してください。", "TileTerm");
             return;
         }
 
         _editing.Name = string.IsNullOrWhiteSpace(_nameBox.Text) ? "(名称未設定)" : _nameBox.Text.Trim();
+        _editing.Icon = _iconBox.Text.Trim();
         _editing.Executable = _exeBox.Text.Trim();
         _editing.Arguments = CommandLineText.Split(_argsBox.Text);
         _editing.WorkingDirectory = string.IsNullOrWhiteSpace(_cwdBox.Text) ? null : _cwdBox.Text.Trim();
@@ -156,12 +205,33 @@ public sealed class ProfileSettingsWindow : Window
         Refresh();
     }
 
+    private void SelectRowFor(ProfileDefinition profile)
+    {
+        if (_list.ItemsSource is System.Collections.Generic.IEnumerable<ProfileRow> rows)
+            _list.SelectedItem = rows.FirstOrDefault(r => r.Profile == profile);
+    }
+
     private void Refresh()
     {
         var selected = _editing;
-        _list.ItemsSource = null;
-        _list.ItemsSource = _store.Profiles;
-        if (selected is not null && _store.Profiles.Contains(selected))
-            _list.SelectedItem = selected;
+        var rows = _store.Profiles.Select(p => new ProfileRow(p, FormatRow(p))).ToList();
+        _list.ItemsSource = rows;
+
+        if (selected is not null)
+            _list.SelectedItem = rows.FirstOrDefault(r => r.Profile == selected);
+
+        LoadSelected();
+    }
+
+    private string FormatRow(ProfileDefinition p)
+    {
+        string star = p.Id == _store.DefaultProfileId ? "⭐" : "・";
+        string heart = _store.IsFavorite(p) ? " ♥" : "";
+        return $"{star} {p.DisplayIcon()}  {p.Name}{heart}";
+    }
+
+    private sealed record ProfileRow(ProfileDefinition Profile, string Display)
+    {
+        public override string ToString() => Display;
     }
 }

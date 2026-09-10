@@ -44,7 +44,7 @@ public sealed class TerminalPaneControl : Grid
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(6, 0, 0, 0),
             FontSize = 12,
-            Text = profile.Name,
+            Text = $"{profile.DisplayIcon()}  {profile.Name}",
         };
 
         var header = BuildHeader();
@@ -125,9 +125,10 @@ public sealed class TerminalPaneControl : Grid
         _canvas.Terminal = Session.Terminal;
 
         Session.OutputReceived += () => Dispatcher.BeginInvoke(() => _canvas.InvalidateVisual());
-        Session.Exited += code => Dispatcher.BeginInvoke(() => _titleText.Text = $"{Profile.Name} (終了 code={code})");
+        Session.Exited += code => Dispatcher.BeginInvoke(() =>
+            _titleText.Text = $"{Profile.DisplayIcon()}  {Profile.Name} (終了 code={code})");
 
-        _titleText.Text = Profile.Name;
+        _titleText.Text = $"{Profile.DisplayIcon()}  {Profile.Name}";
         _canvas.Focus();
 
         try

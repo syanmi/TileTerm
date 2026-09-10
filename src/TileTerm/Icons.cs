@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -82,6 +84,46 @@ internal static class Icons
             Width = size, Height = size, Stroke = Ink, StrokeThickness = thickness, Fill = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A)),
         }.At(0, 3));
         return canvas;
+    }
+
+    /// <summary>Gear/cog icon for the settings button. Built from a computed tooth
+    /// polygon plus a punched-out center hole, rather than a hand-tuned path string —
+    /// simple trigonometry is easier to get right on the first try than eyeballing
+    /// coordinates blind.</summary>
+    public static UIElement Settings(double size = 15)
+    {
+        double cx = size / 2.0, cy = size / 2.0;
+        double outerR = size * 0.46;
+        double innerR = size * 0.32;
+        double holeR = size * 0.17;
+        const int teeth = 8;
+        double toothHalfAngle = (360.0 / teeth) * 0.22;
+
+        var points = new PointCollection();
+        for (int i = 0; i < teeth; i++)
+        {
+            double a0 = 360.0 / teeth * i;
+            points.Add(Polar(cx, cy, innerR, a0 - toothHalfAngle));
+            points.Add(Polar(cx, cy, outerR, a0 - toothHalfAngle));
+            points.Add(Polar(cx, cy, outerR, a0 + toothHalfAngle));
+            points.Add(Polar(cx, cy, innerR, a0 + toothHalfAngle));
+        }
+
+        var figure = new PathFigure { StartPoint = points[0], IsClosed = true };
+        figure.Segments.Add(new PolyLineSegment(points.Skip(1).ToList(), isStroked: true));
+        var gear = new PathGeometry();
+        gear.Figures.Add(figure);
+
+        var hole = new EllipseGeometry(new Point(cx, cy), holeR, holeR);
+        var combined = new CombinedGeometry(GeometryCombineMode.Exclude, gear, hole);
+
+        return new Path { Data = combined, Fill = Ink, Width = size, Height = size, Stretch = Stretch.Uniform };
+    }
+
+    private static Point Polar(double cx, double cy, double r, double angleDeg)
+    {
+        double rad = angleDeg * Math.PI / 180.0;
+        return new Point(cx + r * Math.Cos(rad), cy + r * Math.Sin(rad));
     }
 
     private static T At<T>(this T shape, double left, double top) where T : UIElement

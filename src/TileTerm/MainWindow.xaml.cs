@@ -1,6 +1,9 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Shell;
 using TileTerm.Terminal;
 
@@ -8,7 +11,8 @@ namespace TileTerm;
 
 /// <summary>
 /// App shell: a custom (VSCode-style) title bar that doubles as the pane
-/// split/close controls, plus a <see cref="PaneManager"/>-driven content area.
+/// split/close controls plus a favorites quick-launch bar, and a
+/// <see cref="PaneManager"/>-driven content area.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -19,6 +23,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        SettingsButton.Content = Icons.Settings();
         SplitRightButton.Content = Icons.SplitRight();
         SplitDownButton.Content = Icons.SplitDown();
         CloseTileButton.Content = Icons.Close(14);
@@ -50,8 +55,8 @@ public partial class MainWindow : Window
         };
 
         SettingsButton.Click += (_, _) => OpenSettings();
-        SplitRightButton.Click += (_, _) => ShowSplitMenu(SplitRightButton, SplitDirection.Right);
-        SplitDownButton.Click += (_, _) => ShowSplitMenu(SplitDownButton, SplitDirection.Down);
+        SplitRightButton.Click += (_, _) => SplitWithDefault(SplitDirection.Right);
+        SplitDownButton.Click += (_, _) => SplitWithDefault(SplitDirection.Down);
         CloseTileButton.Click += (_, _) => _paneManager?.CloseActive();
 
         MinimizeButton.Click += (_, _) => SystemCommands.MinimizeWindow(this);
@@ -66,30 +71,65 @@ public partial class MainWindow : Window
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _profileStore.Load();
-        var initial = _profileStore.Profiles.Count > 0 ? _profileStore.Profiles[0] : new ProfileDefinition();
+        var initial = _profileStore.GetDefaultProfile() ?? new ProfileDefinition();
         _paneManager = new PaneManager(PaneHost, initial);
+        RebuildFavoritesBar();
     }
 
-    private void ShowSplitMenu(Button anchor, SplitDirection direction)
+    private void SplitWithDefault(SplitDirection direction)
     {
-        var menu = new ContextMenu();
-        foreach (var p in _profileStore.Profiles)
+        var profile = _profileStore.GetDefaultProfile();
+        if (profile is null)
         {
-            var item = new MenuItem { Header = p.Name };
-            item.Click += (_, _) => _paneManager?.SplitActive(direction, p);
-            menu.Items.Add(item);
+            MessageBox.Show(this, "既定のプロンプトが設定されていません。設定から追加してください。", "TileTerm");
+            return;
         }
-        if (menu.Items.Count == 0)
-            menu.Items.Add(new MenuItem { Header = "(プロファイルがありません。設定から追加してください)", IsEnabled = false });
-
-        anchor.ContextMenu = menu;
-        menu.IsOpen = true;
+        _paneManager?.SplitActive(direction, profile);
     }
 
     private void OpenSettings()
     {
-        var window = new ProfileSettingsWindow(_profileStore) { Owner = this };
+        var window = new SettingsWindow(_profileStore) { Owner = this };
         window.ShowDialog();
+        RebuildFavoritesBar(); // profiles / default / favorites may have changed
+    }
+
+    /// <summary>Rebuilds the row of favorite-profile quick-launch buttons after the
+    /// title bar's Settings button. Each one splits the active pane on double-click:
+    /// left button = 縦分割 (vertical divider, side by side), right button = 横分割
+    /// (horizontal divider, stacked) — matching the split-direction buttons' own
+    /// left/right visual metaphor.</summary>
+    private void RebuildFavoritesBar()
+    {
+        FavoritesPanel.Children.Clear();
+        foreach (var profile in _profileStore.GetFavoritesInOrder())
+            FavoritesPanel.Children.Add(BuildFavoriteButton(profile));
+    }
+
+    private Button BuildFavoriteButton(ProfileDefinition profile)
+    {
+        // A real Button (rather than a plain Border) so it's a proper control:
+        // discoverable via UI Automation/screen readers, and it picks up the
+        // same hover styling as the other title-bar buttons for free.
+        var button = new Button
+        {
+            Style = (Style)FindResource("TitleBarButton"),
+            Content = new TextBlock { Text = profile.DisplayIcon(), FontSize = 13 },
+            ToolTip = $"{profile.Name}\nダブルクリック: 縦分割 / 右ダブルクリック: 横分割",
+        };
+        AutomationProperties.SetName(button, $"お気に入り: {profile.Name}");
+        WindowChrome.SetIsHitTestVisibleInChrome(button, true);
+
+        button.PreviewMouseDown += (_, e) =>
+        {
+            if (e.ClickCount != 2) return;
+            if (e.ChangedButton == MouseButton.Left)
+                _paneManager?.SplitActive(SplitDirection.Right, profile);
+            else if (e.ChangedButton == MouseButton.Right)
+                _paneManager?.SplitActive(SplitDirection.Down, profile);
+        };
+
+        return button;
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)
