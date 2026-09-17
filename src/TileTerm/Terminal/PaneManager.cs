@@ -214,14 +214,40 @@ public sealed class PaneManager
         return grid;
     }
 
-    private static GridSplitter MakeSplitter(bool vertical) => new()
+    /// <summary>
+    /// A splitter that's easy to grab but reads as a thin, unobtrusive divider —
+    /// a wider transparent hit-test column with a 1px line centered inside it,
+    /// rather than one solid thick bar (which read as "too thick" in practice).
+    /// </summary>
+    private static GridSplitter MakeSplitter(bool vertical)
     {
-        Width = vertical ? 5 : double.NaN,
-        Height = vertical ? double.NaN : 5,
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-        VerticalAlignment = VerticalAlignment.Stretch,
-        Background = Brushes.DimGray,
-        ResizeBehavior = GridResizeBehavior.PreviousAndNext,
-        Cursor = vertical ? Cursors.SizeWE : Cursors.SizeNS,
-    };
+        var splitter = new GridSplitter
+        {
+            Width = vertical ? 5 : double.NaN,
+            Height = vertical ? double.NaN : 5,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Background = Brushes.Transparent,
+            ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+            Cursor = vertical ? Cursors.SizeWE : Cursors.SizeNS,
+        };
+
+        var line = new FrameworkElementFactory(typeof(Border));
+        line.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3A)));
+        if (vertical)
+        {
+            line.SetValue(FrameworkElement.WidthProperty, 1.0);
+            line.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            line.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Stretch);
+        }
+        else
+        {
+            line.SetValue(FrameworkElement.HeightProperty, 1.0);
+            line.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            line.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+        }
+
+        splitter.Template = new ControlTemplate(typeof(GridSplitter)) { VisualTree = line };
+        return splitter;
+    }
 }

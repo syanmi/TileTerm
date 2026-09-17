@@ -17,6 +17,29 @@ internal static class Icons
 {
     private static readonly Brush Ink = Brushes.Gainsboro;
 
+    /// <summary>App icon: a 2x2 grid of tiles, standing in for "tiled terminal panes"
+    /// — drawn rather than a font glyph so it's never a mysterious misaligned symbol
+    /// (a real risk with symbol-block Unicode characters across fonts/DPI).</summary>
+    public static UIElement App(double size = 16)
+    {
+        var canvas = new Canvas { Width = size, Height = size };
+        double gap = size * 0.14;
+        double cell = (size - gap) / 2.0;
+        var brush = new SolidColorBrush(Color.FromRgb(0x3A, 0x9B, 0xF5));
+
+        void AddTile(double x, double y) => canvas.Children.Add(new Rectangle
+        {
+            Width = cell, Height = cell, Fill = brush, RadiusX = 1.5, RadiusY = 1.5,
+        }.At(x, y));
+
+        AddTile(0, 0);
+        AddTile(cell + gap, 0);
+        AddTile(0, cell + gap);
+        AddTile(cell + gap, cell + gap);
+
+        return canvas;
+    }
+
     public static UIElement SplitRight() => BuildSplit(vertical: true);
     public static UIElement SplitDown() => BuildSplit(vertical: false);
 

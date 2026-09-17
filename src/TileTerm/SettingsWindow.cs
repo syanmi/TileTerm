@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using TileTerm.Terminal;
 
 namespace TileTerm;
@@ -15,6 +16,13 @@ namespace TileTerm;
 /// </summary>
 public sealed class SettingsWindow : Window
 {
+    // Same dark palette as MainWindow, so this doesn't look like a different app.
+    private static readonly Brush BgWindow = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E));
+    private static readonly Brush BgField = new SolidColorBrush(Color.FromRgb(0x2D, 0x2D, 0x2D));
+    private static readonly Brush BgList = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x25));
+    private static readonly Brush BorderCol = new SolidColorBrush(Color.FromRgb(0x3F, 0x3F, 0x3F));
+    private static readonly Brush Fg = Brushes.Gainsboro;
+
     private readonly ProfileStore _store;
     private readonly ListBox _list = new();
     private readonly TextBox _nameBox = new();
@@ -33,7 +41,10 @@ public sealed class SettingsWindow : Window
         Title = "TileTerm - 設定";
         Width = 760;
         Height = 460;
+        Background = BgWindow;
+        Foreground = Fg;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        DarkTitleBar.Apply(this);
 
         var root = new Grid { Margin = new Thickness(10) };
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
@@ -43,7 +54,7 @@ public sealed class SettingsWindow : Window
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         // Category sidebar — just one category today; structured so more can be added later.
-        var categoryList = new ListBox { BorderThickness = new Thickness(0) };
+        var categoryList = new ListBox { BorderThickness = new Thickness(0), Background = BgWindow, Foreground = Fg };
         categoryList.Items.Add("プロンプト");
         categoryList.SelectedIndex = 0;
         Grid.SetColumn(categoryList, 0);
@@ -52,12 +63,15 @@ public sealed class SettingsWindow : Window
         // Profile list for the "プロンプト" category.
         var leftPanel = new DockPanel();
         var listButtons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-        var addButton = new Button { Content = "追加", Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 0, 4, 0) };
-        var removeButton = new Button { Content = "削除", Padding = new Thickness(8, 2, 8, 2) };
+        var addButton = Styled(new Button { Content = "追加", Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 0, 4, 0) });
+        var removeButton = Styled(new Button { Content = "削除", Padding = new Thickness(8, 2, 8, 2) });
         listButtons.Children.Add(addButton);
         listButtons.Children.Add(removeButton);
         DockPanel.SetDock(listButtons, Dock.Bottom);
         leftPanel.Children.Add(listButtons);
+        _list.Background = BgList;
+        _list.Foreground = Fg;
+        _list.BorderBrush = BorderCol;
         leftPanel.Children.Add(_list);
         Grid.SetColumn(leftPanel, 2);
         root.Children.Add(leftPanel);
@@ -70,16 +84,20 @@ public sealed class SettingsWindow : Window
         form.Children.Add(LabeledBox("引数（スペース区切り。空白を含む場合は \"...\" で囲む）", _argsBox));
         form.Children.Add(LabeledBox("作業ディレクトリ（空欄ならユーザーフォルダ）", _cwdBox));
 
-        var saveButton = new Button
+        var saveButton = Styled(new Button
         {
             Content = "保存", Padding = new Thickness(10, 4, 10, 4),
             Margin = new Thickness(0, 4, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        });
         saveButton.Click += OnSave;
         form.Children.Add(saveButton);
 
-        form.Children.Add(new Separator { Margin = new Thickness(0, 14, 0, 10) });
+        form.Children.Add(new Separator
+        {
+            Margin = new Thickness(0, 14, 0, 10), Background = BorderCol, BorderBrush = BorderCol,
+        });
 
+        Styled(_defaultButton);
         _defaultButton.Content = "既定のプロンプトにする";
         _defaultButton.Click += (_, _) =>
         {
@@ -87,15 +105,16 @@ public sealed class SettingsWindow : Window
         };
         form.Children.Add(_defaultButton);
 
+        _favoriteCheck.Foreground = Fg;
         _favoriteCheck.Checked += (_, _) => OnFavoriteToggled(true);
         _favoriteCheck.Unchecked += (_, _) => OnFavoriteToggled(false);
         form.Children.Add(_favoriteCheck);
 
-        var closeButton = new Button
+        var closeButton = Styled(new Button
         {
             Content = "閉じる", Padding = new Thickness(10, 4, 10, 4),
             Margin = new Thickness(0, 18, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        });
         closeButton.Click += (_, _) => Close();
         form.Children.Add(closeButton);
 
@@ -111,21 +130,41 @@ public sealed class SettingsWindow : Window
         Refresh();
     }
 
-    private static UIElement LabeledBox(string label, TextBox box)
+    private static Button Styled(Button button)
     {
+        button.Background = BgField;
+        button.Foreground = Fg;
+        button.BorderBrush = BorderCol;
+        return button;
+    }
+
+    private static TextBox Styled(TextBox box)
+    {
+        box.Background = BgField;
+        box.Foreground = Fg;
+        box.BorderBrush = BorderCol;
+        box.CaretBrush = Fg;
+        box.Padding = new Thickness(3);
+        return box;
+    }
+
+    private UIElement LabeledBox(string label, TextBox box)
+    {
+        Styled(box);
         var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
-        panel.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 2), TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new TextBlock { Text = label, Foreground = Fg, Margin = new Thickness(0, 0, 0, 2), TextWrapping = TextWrapping.Wrap });
         panel.Children.Add(box);
         return panel;
     }
 
     private UIElement LabeledBoxWithBrowse(string label, TextBox box)
     {
+        Styled(box);
         var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
-        panel.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 2) });
+        panel.Children.Add(new TextBlock { Text = label, Foreground = Fg, Margin = new Thickness(0, 0, 0, 2) });
 
         var row = new DockPanel();
-        var browseButton = new Button { Content = "参照...", Padding = new Thickness(6, 2, 6, 2) };
+        var browseButton = Styled(new Button { Content = "参照...", Padding = new Thickness(6, 2, 6, 2) });
         browseButton.Click += (_, _) => BrowseExe(box);
         DockPanel.SetDock(browseButton, Dock.Right);
         row.Children.Add(browseButton);

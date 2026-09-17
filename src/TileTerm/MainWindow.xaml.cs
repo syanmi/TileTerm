@@ -22,7 +22,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        WindowMaximizeFix.Apply(this);
 
+        AppIconHost.Content = Icons.App();
         SettingsButton.Content = Icons.Settings();
         SplitRightButton.Content = Icons.SplitRight();
         SplitDownButton.Content = Icons.SplitDown();
@@ -34,25 +36,7 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         Closing += OnClosing;
         StateChanged += (_, _) =>
-        {
             MaximizeButton.Content = WindowState == WindowState.Maximized ? Icons.Restore() : Icons.Maximize();
-            // WindowChrome still counts the (now invisible) resize border + non-client frame
-            // as part of the window when maximized, which clips a few pixels off every edge.
-            // Pad the content back in by that same amount only while maximized (standard
-            // WindowChrome workaround — WindowResizeBorderThickness alone isn't enough).
-            if (WindowState == WindowState.Maximized)
-            {
-                var resize = SystemParameters.WindowResizeBorderThickness;
-                var frame = SystemParameters.WindowNonClientFrameThickness;
-                RootGrid.Margin = new Thickness(
-                    resize.Left + frame.Left, resize.Top + frame.Top,
-                    resize.Right + frame.Right, resize.Bottom + frame.Bottom);
-            }
-            else
-            {
-                RootGrid.Margin = new Thickness(0);
-            }
-        };
 
         SettingsButton.Click += (_, _) => OpenSettings();
         SplitRightButton.Click += (_, _) => SplitWithDefault(SplitDirection.Right);
@@ -114,7 +98,7 @@ public partial class MainWindow : Window
         var button = new Button
         {
             Style = (Style)FindResource("TitleBarButton"),
-            Content = new TextBlock { Text = profile.DisplayIcon(), FontSize = 13 },
+            Content = new TextBlock { Text = profile.DisplayIcon(), FontSize = 13, Foreground = Brushes.Gainsboro },
             ToolTip = $"{profile.Name}\nダブルクリック: 縦分割 / 右ダブルクリック: 横分割",
         };
         AutomationProperties.SetName(button, $"お気に入り: {profile.Name}");
