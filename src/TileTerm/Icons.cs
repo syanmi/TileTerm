@@ -72,6 +72,23 @@ internal static class Icons
         return canvas;
     }
 
+    public static UIElement Plus(double size = 14, double thickness = 1.4)
+    {
+        var canvas = new Canvas { Width = size, Height = size };
+        double m = size * 0.12;
+        canvas.Children.Add(Cap(new Line { X1 = size / 2, Y1 = m, X2 = size / 2, Y2 = size - m, Stroke = Ink, StrokeThickness = thickness }));
+        canvas.Children.Add(Cap(new Line { X1 = m, Y1 = size / 2, X2 = size - m, Y2 = size / 2, Stroke = Ink, StrokeThickness = thickness }));
+        return canvas;
+    }
+
+    public static UIElement Minus(double size = 14, double thickness = 1.4)
+    {
+        var canvas = new Canvas { Width = size, Height = size };
+        double m = size * 0.12;
+        canvas.Children.Add(Cap(new Line { X1 = m, Y1 = size / 2, X2 = size - m, Y2 = size / 2, Stroke = Ink, StrokeThickness = thickness }));
+        return canvas;
+    }
+
     public static UIElement Close(double size = 16, double thickness = 1.4)
     {
         var canvas = new Canvas { Width = size, Height = size };

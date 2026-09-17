@@ -12,18 +12,26 @@ namespace TileTerm;
 /// profiles, pick which one is the 既定 (default), and mark any number of
 /// them as お気に入り (favorites). Backed by <see cref="ProfileStore"/>, which
 /// persists to <c>%AppData%\TileTerm\profiles.json</c>.
+///
+/// Laid out like a typical IDE settings dialog (VSCode/JetBrains): category
+/// tree | list-with-toolbar | editor form, and a fixed action bar pinned to
+/// the bottom of the whole window rather than a Save button buried mid-form.
 /// </summary>
 public sealed class SettingsWindow : Window
 {
     private readonly ProfileStore _store;
-    private readonly ListBox _list = new();
+    private readonly ListBox _list = Theme.ListBox();
     private readonly TextBox _nameBox = Theme.TextBox();
     private readonly TextBox _iconBox = Theme.TextBox();
     private readonly TextBox _exeBox = Theme.TextBox();
     private readonly TextBox _argsBox = Theme.TextBox();
     private readonly TextBox _cwdBox = Theme.TextBox();
     private readonly Button _defaultButton = Theme.Button("既定のプロンプトにする");
-    private readonly CheckBox _favoriteCheck = new() { Content = "お気に入りに登録（タイトルバーにボタンが表示されます）", Margin = new Thickness(0, 10, 0, 0) };
+    private readonly CheckBox _favoriteCheck = new()
+    {
+        Content = "お気に入りに登録", Foreground = Theme.Fg, VerticalAlignment = VerticalAlignment.Center,
+        ToolTip = "タイトルバーにこのプロンプトのボタンが表示されます",
+    };
     private ProfileDefinition? _editing;
     private bool _suppressToggleEvents;
 
@@ -31,43 +39,116 @@ public sealed class SettingsWindow : Window
     {
         _store = store;
         Title = "TileTerm - 設定";
-        Width = 760;
-        Height = 460;
+        Width = 780;
+        Height = 480;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Theme.Apply(this);
 
-        var root = new Grid { Margin = new Thickness(10) };
-        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
-        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
-        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(200) });
-        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
-        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var outer = new Grid();
+        outer.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        outer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var mainArea = BuildMainArea();
+        Grid.SetRow(mainArea, 0);
+        outer.Children.Add(mainArea);
+
+        var actionBar = BuildActionBar();
+        Grid.SetRow(actionBar, 1);
+        outer.Children.Add(actionBar);
+
+        Content = outer;
+        Refresh();
+    }
+
+    private Grid BuildMainArea()
+    {
+        var main = new Grid { Margin = new Thickness(0) };
+        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
+        main.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         // Category sidebar — just one category today; structured so more can be added later.
-        var categoryList = new ListBox { BorderThickness = new Thickness(0), Background = Theme.BgWindow, Foreground = Theme.Fg };
+        var categoryList = Theme.ListBox();
+        categoryList.BorderThickness = new Thickness(0);
+        categoryList.Background = Theme.BgWindow;
+        categoryList.Margin = new Thickness(8);
         categoryList.Items.Add("プロンプト");
         categoryList.SelectedIndex = 0;
         Grid.SetColumn(categoryList, 0);
-        root.Children.Add(categoryList);
+        main.Children.Add(categoryList);
 
-        // Profile list for the "プロンプト" category.
-        var leftPanel = new DockPanel();
-        var listButtons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-        var addButton = Theme.Button("追加");
-        addButton.Margin = new Thickness(0, 0, 4, 0);
-        var removeButton = Theme.Button("削除");
-        listButtons.Children.Add(addButton);
-        listButtons.Children.Add(removeButton);
-        DockPanel.SetDock(listButtons, Dock.Bottom);
-        leftPanel.Children.Add(listButtons);
-        _list.Background = Theme.BgList;
-        _list.Foreground = Theme.Fg;
-        _list.BorderBrush = Theme.BorderCol;
-        leftPanel.Children.Add(_list);
-        Grid.SetColumn(leftPanel, 2);
-        root.Children.Add(leftPanel);
+        var vDivider1 = Theme.Divider(vertical: true);
+        Grid.SetColumn(vDivider1, 1);
+        main.Children.Add(vDivider1);
 
-        // Editor for the selected profile.
+        var rightSide = new Grid();
+        rightSide.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        rightSide.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        rightSide.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var header = new TextBlock
+        {
+            Text = "プロンプト", Foreground = Theme.Fg, FontSize = 16, FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(18, 16, 18, 12),
+        };
+        Grid.SetRow(header, 0);
+        rightSide.Children.Add(header);
+
+        var hDivider = Theme.Divider(vertical: false);
+        Grid.SetRow(hDivider, 1);
+        rightSide.Children.Add(hDivider);
+
+        var body = BuildBody();
+        Grid.SetRow(body, 2);
+        rightSide.Children.Add(body);
+
+        Grid.SetColumn(rightSide, 2);
+        main.Children.Add(rightSide);
+
+        return main;
+    }
+
+    private Grid BuildBody()
+    {
+        var body = new Grid { Margin = new Thickness(18, 14, 18, 14) };
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(230) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // Profile list, with a small +/- toolbar above it.
+        var listPanel = new DockPanel();
+
+        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
+        var addButton = Theme.IconButton(Icons.Plus());
+        addButton.ToolTip = "プロンプトを追加";
+        var removeButton = Theme.IconButton(Icons.Minus());
+        removeButton.ToolTip = "選択したプロンプトを削除";
+        toolbar.Children.Add(addButton);
+        toolbar.Children.Add(removeButton);
+        DockPanel.SetDock(toolbar, Dock.Top);
+        listPanel.Children.Add(toolbar);
+        listPanel.Children.Add(_list);
+
+        Grid.SetColumn(listPanel, 0);
+        body.Children.Add(listPanel);
+
+        var vDivider2 = Theme.Divider(vertical: true);
+        Grid.SetColumn(vDivider2, 1);
+        body.Children.Add(vDivider2);
+
+        var form = BuildForm();
+        Grid.SetColumn(form, 2);
+        body.Children.Add(form);
+
+        addButton.Click += (_, _) => AddNew();
+        removeButton.Click += (_, _) => RemoveSelected();
+        _list.SelectionChanged += (_, _) => LoadSelected();
+
+        return body;
+    }
+
+    private ScrollViewer BuildForm()
+    {
         var form = new StackPanel();
         form.Children.Add(LabeledBox("名前", _nameBox));
         form.Children.Add(LabeledBox("表示アイコン（絵文字や \"PS\" のような短い文字列。空欄なら名前の頭文字）", _iconBox));
@@ -75,64 +156,64 @@ public sealed class SettingsWindow : Window
         form.Children.Add(LabeledBox("引数（スペース区切り。空白を含む場合は \"...\" で囲む）", _argsBox));
         form.Children.Add(LabeledBox("作業ディレクトリ（空欄ならユーザーフォルダ）", _cwdBox));
 
-        var saveButton = Theme.Button("保存");
-        saveButton.Margin = new Thickness(0, 4, 0, 0);
-        saveButton.HorizontalAlignment = HorizontalAlignment.Left;
-        saveButton.Click += OnSave;
-        form.Children.Add(saveButton);
+        form.Children.Add(Theme.Divider(vertical: false).Also(d => d.Margin = new Thickness(0, 8, 0, 14)));
 
-        form.Children.Add(new Separator
-        {
-            Margin = new Thickness(0, 14, 0, 10), Background = Theme.BorderCol, BorderBrush = Theme.BorderCol,
-        });
+        var optionsRow = new StackPanel { Orientation = Orientation.Horizontal };
+        optionsRow.Children.Add(_defaultButton);
+        _favoriteCheck.Margin = new Thickness(16, 0, 0, 0);
+        _favoriteCheck.Checked += (_, _) => OnFavoriteToggled(true);
+        _favoriteCheck.Unchecked += (_, _) => OnFavoriteToggled(false);
+        optionsRow.Children.Add(_favoriteCheck);
+        form.Children.Add(optionsRow);
 
-        _defaultButton.Padding = new Thickness(8, 3, 8, 3);
-        _defaultButton.HorizontalAlignment = HorizontalAlignment.Left;
         _defaultButton.Click += (_, _) =>
         {
             if (_editing is not null) { _store.SetDefault(_editing); Refresh(); }
         };
-        form.Children.Add(_defaultButton);
 
-        _favoriteCheck.Foreground = Theme.Fg;
-        _favoriteCheck.Checked += (_, _) => OnFavoriteToggled(true);
-        _favoriteCheck.Unchecked += (_, _) => OnFavoriteToggled(false);
-        form.Children.Add(_favoriteCheck);
+        return new ScrollViewer { Content = form, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, 4, 0) };
+    }
+
+    private Border BuildActionBar()
+    {
+        var bar = new Border
+        {
+            BorderBrush = Theme.BorderCol,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(18, 12, 18, 12),
+        };
+
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
 
         var closeButton = Theme.Button("閉じる");
-        closeButton.Margin = new Thickness(0, 18, 0, 0);
-        closeButton.HorizontalAlignment = HorizontalAlignment.Left;
         closeButton.Click += (_, _) => Close();
-        form.Children.Add(closeButton);
+        panel.Children.Add(closeButton);
 
-        Grid.SetColumn(form, 4);
-        root.Children.Add(form);
+        var saveButton = Theme.PrimaryButton("保存");
+        saveButton.Margin = new Thickness(8, 0, 0, 0);
+        saveButton.Click += OnSave;
+        panel.Children.Add(saveButton);
 
-        Content = root;
-
-        addButton.Click += (_, _) => AddNew();
-        removeButton.Click += (_, _) => RemoveSelected();
-        _list.SelectionChanged += (_, _) => LoadSelected();
-
-        Refresh();
+        bar.Child = panel;
+        return bar;
     }
 
     private static UIElement LabeledBox(string label, TextBox box)
     {
-        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
-        panel.Children.Add(new TextBlock { Text = label, Foreground = Theme.Fg, Margin = new Thickness(0, 0, 0, 2), TextWrapping = TextWrapping.Wrap });
+        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+        panel.Children.Add(Theme.Label(label));
         panel.Children.Add(box);
         return panel;
     }
 
     private UIElement LabeledBoxWithBrowse(string label, TextBox box)
     {
-        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
-        panel.Children.Add(new TextBlock { Text = label, Foreground = Theme.Fg, Margin = new Thickness(0, 0, 0, 2) });
+        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+        panel.Children.Add(Theme.Label(label));
 
         var row = new DockPanel();
         var browseButton = Theme.Button("参照...");
-        browseButton.Padding = new Thickness(6, 2, 6, 2);
+        browseButton.Margin = new Thickness(6, 0, 0, 0);
         browseButton.Click += (_, _) => BrowseExe(box);
         DockPanel.SetDock(browseButton, Dock.Right);
         row.Children.Add(browseButton);
@@ -232,7 +313,7 @@ public sealed class SettingsWindow : Window
 
     private string FormatRow(ProfileDefinition p)
     {
-        string star = p.Id == _store.DefaultProfileId ? "⭐" : "・";
+        string star = p.Id == _store.DefaultProfileId ? "⭐" : "  ";
         string heart = _store.IsFavorite(p) ? " ♥" : "";
         return $"{star} {p.DisplayIcon()}  {p.Name}{heart}";
     }
@@ -240,5 +321,14 @@ public sealed class SettingsWindow : Window
     private sealed record ProfileRow(ProfileDefinition Profile, string Display)
     {
         public override string ToString() => Display;
+    }
+}
+
+file static class FrameworkElementExtensions
+{
+    public static T Also<T>(this T element, System.Action<T> configure)
+    {
+        configure(element);
+        return element;
     }
 }
