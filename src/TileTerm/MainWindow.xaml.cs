@@ -76,7 +76,7 @@ public partial class MainWindow : Window
         var profile = _profileStore.GetDefaultProfile();
         if (profile is null)
         {
-            MessageBox.Show(this, "既定のプロンプトが設定されていません。設定から追加してください。", "TileTerm");
+            MessageDialog.Show(this, "既定のプロンプトが設定されていません。設定から追加してください。", "TileTerm");
             return;
         }
         _paneManager?.SplitActive(direction, profile);
@@ -129,9 +129,8 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
-        var result = MessageBox.Show(
-            this, "開いているすべてのタイルを閉じます。よろしいですか？", "TileTerm",
-            MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        var result = MessageDialog.Show(
+            this, "開いているすべてのタイルを閉じます。よろしいですか？", "TileTerm", MessageBoxButton.OKCancel);
 
         if (result != MessageBoxResult.OK)
         {

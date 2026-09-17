@@ -158,9 +158,8 @@ public sealed class TerminalPaneControl : Grid
         }
         catch (Exception ex)
         {
-            MessageBox.Show(
-                Window.GetWindow(this), $"セッションの起動に失敗しました:\n{Profile.Executable}\n\n{ex.Message}",
-                "TileTerm", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageDialog.Show(
+                Window.GetWindow(this), $"セッションの起動に失敗しました:\n{Profile.Executable}\n\n{ex.Message}", "TileTerm");
         }
     }
 
