@@ -223,8 +223,8 @@ public sealed class PaneManager
     {
         var splitter = new GridSplitter
         {
-            Width = vertical ? 5 : double.NaN,
-            Height = vertical ? double.NaN : 5,
+            Width = vertical ? 3 : double.NaN,
+            Height = vertical ? double.NaN : 3,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             Background = Brushes.Transparent,

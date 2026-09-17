@@ -36,7 +36,18 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         Closing += OnClosing;
         StateChanged += (_, _) =>
+        {
             MaximizeButton.Content = WindowState == WindowState.Maximized ? Icons.Restore() : Icons.Maximize();
+
+            // WindowChrome still hit-tests the top few pixels of a maximized window as
+            // "resize border" (they'd normally let you drag-resize that edge), which can
+            // steal clicks meant to drag the title bar right at its top edge — the window
+            // just silently ignores the click. There's nothing to resize once maximized,
+            // so zero the resize border then and restore it when back to normal size.
+            var chrome = WindowChrome.GetWindowChrome(this);
+            if (chrome is not null)
+                chrome.ResizeBorderThickness = WindowState == WindowState.Maximized ? new Thickness(0) : new Thickness(4);
+        };
 
         SettingsButton.Click += (_, _) => OpenSettings();
         SplitRightButton.Click += (_, _) => SplitWithDefault(SplitDirection.Right);

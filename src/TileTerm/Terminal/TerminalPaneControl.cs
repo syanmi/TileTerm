@@ -19,8 +19,10 @@ namespace TileTerm.Terminal;
 public sealed class TerminalPaneControl : Grid
 {
     /// <summary>Matches _activeBorder's BorderThickness — the header/canvas are inset by
-    /// exactly this much so the active-pane highlight never paints over their content.</summary>
-    private const double BorderInset = 2;
+    /// exactly this much so the active-pane highlight never paints over their content.
+    /// Kept to 1px so the gap this reserves around every pane (active or not) stays tight;
+    /// layout rounding (see MainWindow) keeps a border this thin crisp rather than blurry.</summary>
+    private const double BorderInset = 1;
 
     private readonly TerminalCanvas _canvas = new();
     private readonly TextBlock _titleText;
