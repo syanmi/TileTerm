@@ -18,6 +18,10 @@ namespace TileTerm.Terminal;
 /// </summary>
 public sealed class TerminalPaneControl : Grid
 {
+    /// <summary>Matches _activeBorder's BorderThickness — the header/canvas are inset by
+    /// exactly this much so the active-pane highlight never paints over their content.</summary>
+    private const double BorderInset = 2;
+
     private readonly TerminalCanvas _canvas = new();
     private readonly TextBlock _titleText;
     private readonly Border _activeBorder;
@@ -47,19 +51,31 @@ public sealed class TerminalPaneControl : Grid
             Text = $"{profile.DisplayIcon()}  {profile.Name}",
         };
 
+        // Header + canvas live inside their own inset grid, so the active-pane border
+        // (below) can be drawn at the pane's true outer edge without ever overlapping
+        // their content — a border painted directly over the canvas used to eat into
+        // the terminal text at the edges.
+        var content = new Grid { Margin = new Thickness(BorderInset) };
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
         var header = BuildHeader();
-        SetRow(header, 0);
-        Children.Add(header);
+        Grid.SetRow(header, 0);
+        content.Children.Add(header);
 
-        SetRow(_canvas, 1);
-        Children.Add(_canvas);
+        Grid.SetRow(_canvas, 1);
+        content.Children.Add(_canvas);
 
-        // A thin overlay border spanning both rows, used to highlight whichever pane is active.
+        SetRow(content, 0);
+        SetRowSpan(content, 2);
+        Children.Add(content);
+
         _activeBorder = new Border
         {
             BorderBrush = Brushes.Transparent,
-            BorderThickness = new Thickness(2),
+            BorderThickness = new Thickness(BorderInset),
             IsHitTestVisible = false,
+            SnapsToDevicePixels = true,
         };
         SetRow(_activeBorder, 0);
         SetRowSpan(_activeBorder, 2);

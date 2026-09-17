@@ -230,10 +230,13 @@ public sealed class PaneManager
             Background = Brushes.Transparent,
             ResizeBehavior = GridResizeBehavior.PreviousAndNext,
             Cursor = vertical ? Cursors.SizeWE : Cursors.SizeNS,
+            UseLayoutRounding = true,
+            SnapsToDevicePixels = true,
         };
 
         var line = new FrameworkElementFactory(typeof(Border));
         line.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3A)));
+        line.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
         if (vertical)
         {
             line.SetValue(FrameworkElement.WidthProperty, 1.0);
