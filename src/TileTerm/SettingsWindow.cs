@@ -39,8 +39,8 @@ public sealed class SettingsWindow : Window
     {
         _store = store;
         Title = "TileTerm - 設定";
-        Width = 780;
-        Height = 480;
+        Width = 740;
+        Height = 440;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Theme.Apply(this);
 
@@ -71,7 +71,7 @@ public sealed class SettingsWindow : Window
         var categoryList = Theme.ListBox();
         categoryList.BorderThickness = new Thickness(0);
         categoryList.Background = Theme.BgWindow;
-        categoryList.Margin = new Thickness(8);
+        categoryList.Margin = new Thickness(6);
         categoryList.Items.Add("プロンプト");
         categoryList.SelectedIndex = 0;
         Grid.SetColumn(categoryList, 0);
@@ -88,8 +88,8 @@ public sealed class SettingsWindow : Window
 
         var header = new TextBlock
         {
-            Text = "プロンプト", Foreground = Theme.Fg, FontSize = 16, FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(18, 16, 18, 12),
+            Text = "プロンプト", Foreground = Theme.Fg, FontSize = 13, FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(14, 10, 14, 8),
         };
         Grid.SetRow(header, 0);
         rightSide.Children.Add(header);
@@ -110,15 +110,15 @@ public sealed class SettingsWindow : Window
 
     private Grid BuildBody()
     {
-        var body = new Grid { Margin = new Thickness(18, 14, 18, 14) };
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(230) });
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+        var body = new Grid { Margin = new Thickness(14, 10, 14, 10) };
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         // Profile list, with a small +/- toolbar above it.
         var listPanel = new DockPanel();
 
-        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
+        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
         var addButton = Theme.IconButton(Icons.Plus());
         addButton.ToolTip = "プロンプトを追加";
         var removeButton = Theme.IconButton(Icons.Minus());
@@ -156,11 +156,11 @@ public sealed class SettingsWindow : Window
         form.Children.Add(LabeledBox("引数（スペース区切り。空白を含む場合は \"...\" で囲む）", _argsBox));
         form.Children.Add(LabeledBox("作業ディレクトリ（空欄ならユーザーフォルダ）", _cwdBox));
 
-        form.Children.Add(Theme.Divider(vertical: false).Also(d => d.Margin = new Thickness(0, 8, 0, 14)));
+        form.Children.Add(Theme.Divider(vertical: false).Also(d => d.Margin = new Thickness(0, 6, 0, 10)));
 
         var optionsRow = new StackPanel { Orientation = Orientation.Horizontal };
         optionsRow.Children.Add(_defaultButton);
-        _favoriteCheck.Margin = new Thickness(16, 0, 0, 0);
+        _favoriteCheck.Margin = new Thickness(12, 0, 0, 0);
         _favoriteCheck.Checked += (_, _) => OnFavoriteToggled(true);
         _favoriteCheck.Unchecked += (_, _) => OnFavoriteToggled(false);
         optionsRow.Children.Add(_favoriteCheck);
@@ -180,7 +180,7 @@ public sealed class SettingsWindow : Window
         {
             BorderBrush = Theme.BorderCol,
             BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding = new Thickness(18, 12, 18, 12),
+            Padding = new Thickness(14, 8, 14, 8),
         };
 
         var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
@@ -200,7 +200,7 @@ public sealed class SettingsWindow : Window
 
     private static UIElement LabeledBox(string label, TextBox box)
     {
-        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
         panel.Children.Add(Theme.Label(label));
         panel.Children.Add(box);
         return panel;
@@ -208,7 +208,7 @@ public sealed class SettingsWindow : Window
 
     private UIElement LabeledBoxWithBrowse(string label, TextBox box)
     {
-        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
         panel.Children.Add(Theme.Label(label));
 
         var row = new DockPanel();

@@ -35,7 +35,7 @@ internal static class Theme
     public static readonly Brush Accent = new SolidColorBrush(Color.FromRgb(0x3A, 0x9B, 0xF5));
     public static readonly Brush AccentHover = new SolidColorBrush(Color.FromRgb(0x5B, 0xAC, 0xF7));
 
-    private const double Radius = 4;
+    private const double Radius = 3;
 
     private static readonly ControlTemplate SharedButtonTemplate = BuildButtonTemplate(BgField, BgHover, BgPressed);
     private static readonly ControlTemplate PrimaryButtonTemplate = BuildButtonTemplate(Accent, AccentHover, Accent);
@@ -61,7 +61,8 @@ internal static class Theme
         Foreground = Fg,
         BorderBrush = BorderCol,
         BorderThickness = new Thickness(1),
-        Padding = new Thickness(12, 5, 12, 5),
+        Padding = new Thickness(10, 3, 10, 3),
+        FontSize = 12,
     };
 
     /// <summary>The accent-colored "main action" button for a dialog (e.g. Save/OK).</summary>
@@ -72,8 +73,8 @@ internal static class Theme
         Background = Accent,
         Foreground = Brushes.White,
         BorderThickness = new Thickness(0),
-        Padding = new Thickness(14, 5, 14, 5),
-        FontWeight = FontWeights.Medium,
+        Padding = new Thickness(11, 3, 11, 3),
+        FontSize = 12,
     };
 
     /// <summary>A small icon-only button (list toolbars: +/− etc.) — same states as
@@ -81,7 +82,7 @@ internal static class Theme
     public static Button IconButton(object content)
     {
         var button = Button(content);
-        button.Padding = new Thickness(5);
+        button.Padding = new Thickness(4);
         button.BorderThickness = new Thickness(0);
         button.MinWidth = 0;
         return button;
@@ -95,7 +96,8 @@ internal static class Theme
         BorderBrush = BorderCol,
         CaretBrush = Fg,
         BorderThickness = new Thickness(1),
-        Padding = new Thickness(7, 5, 7, 5),
+        Padding = new Thickness(5, 3, 5, 3),
+        FontSize = 12,
     };
 
     /// <summary>A ListBox styled with accent-colored selection instead of the OS's own
@@ -106,7 +108,8 @@ internal static class Theme
         Foreground = Fg,
         BorderBrush = BorderCol,
         BorderThickness = new Thickness(1),
-        Padding = new Thickness(4),
+        Padding = new Thickness(2),
+        FontSize = 12,
         ItemContainerStyle = ListBoxItemStyle,
     };
 
@@ -115,8 +118,8 @@ internal static class Theme
     {
         Text = text,
         Foreground = FgMuted,
-        FontSize = 11,
-        Margin = new Thickness(0, 0, 0, 4),
+        FontSize = 10.5,
+        Margin = new Thickness(0, 0, 0, 3),
         TextWrapping = TextWrapping.Wrap,
     };
 
@@ -203,8 +206,8 @@ internal static class Theme
         var border = new FrameworkElementFactory(typeof(Border)) { Name = "Bd" };
         border.SetValue(Border.BackgroundProperty, Brushes.Transparent);
         border.SetValue(Border.CornerRadiusProperty, new CornerRadius(Radius));
-        border.SetValue(Border.PaddingProperty, new Thickness(8, 6, 8, 6));
-        border.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 1, 0, 1));
+        border.SetValue(Border.PaddingProperty, new Thickness(6, 3, 6, 3));
+        border.SetValue(FrameworkElement.MarginProperty, new Thickness(0));
 
         var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
         border.AppendChild(presenter);
