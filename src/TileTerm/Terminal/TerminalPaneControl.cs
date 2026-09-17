@@ -18,11 +18,14 @@ namespace TileTerm.Terminal;
 /// </summary>
 public sealed class TerminalPaneControl : Grid
 {
-    /// <summary>Matches _activeBorder's BorderThickness — the header/canvas are inset by
-    /// exactly this much so the active-pane highlight never paints over their content.
-    /// Kept to 1px so the gap this reserves around every pane (active or not) stays tight;
-    /// layout rounding (see MainWindow) keeps a border this thin crisp rather than blurry.</summary>
-    private const double BorderInset = 1;
+    /// <summary>Thickness of the active-pane highlight border itself. 1px read as too faint
+    /// to notice, so this is deliberately a bit heavier.</summary>
+    private const double ActiveBorderThickness = 2;
+
+    /// <summary>How far the header/canvas are inset from the pane's true edge — always at
+    /// least <see cref="ActiveBorderThickness"/> (so the border never paints over content) plus a
+    /// little extra breathing room, so text doesn't start on the pixel right next to the line.</summary>
+    private const double ContentInset = ActiveBorderThickness + 2;
 
     private readonly TerminalCanvas _canvas = new();
     private readonly TextBlock _titleText;
@@ -57,7 +60,7 @@ public sealed class TerminalPaneControl : Grid
         // (below) can be drawn at the pane's true outer edge without ever overlapping
         // their content — a border painted directly over the canvas used to eat into
         // the terminal text at the edges.
-        var content = new Grid { Margin = new Thickness(BorderInset) };
+        var content = new Grid { Margin = new Thickness(ContentInset) };
         content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
@@ -75,7 +78,7 @@ public sealed class TerminalPaneControl : Grid
         _activeBorder = new Border
         {
             BorderBrush = Brushes.Transparent,
-            BorderThickness = new Thickness(BorderInset),
+            BorderThickness = new Thickness(ActiveBorderThickness),
             IsHitTestVisible = false,
             SnapsToDevicePixels = true,
         };
