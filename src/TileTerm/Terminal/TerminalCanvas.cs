@@ -139,7 +139,7 @@ public sealed class TerminalCanvas : FrameworkElement
         {
             double cx = buffer.X * _cellWidth;
             double cy = buffer.Y * _cellHeight;
-            var cursorBrush = new SolidColorBrush(Color.FromArgb(160, 220, 220, 220));
+            var cursorBrush = new SolidColorBrush(TileScheme.TerminalCursor);
             dc.DrawRectangle(cursorBrush, null, terminal.Options.CursorStyle switch
             {
                 CursorStyle.Underline => new Rect(cx, cy + _cellHeight - 2, _cellWidth, 2),

@@ -7,12 +7,19 @@ using System.Windows.Media;
 namespace TileTerm;
 
 /// <summary>
-/// Shared dark palette + control styling, used by every window in the app
-/// (MainWindow's own title bar draws itself; this is for the rest —
-/// SettingsWindow, MessageDialog, and anything added later). Modeled loosely
+/// Shared palette + control styling, used by every window in the app. Modeled loosely
 /// after VSCode's/JetBrains' settings dialogs: one accent color used
 /// consistently for selection/focus/primary actions, rounded-corner fields,
 /// and thin low-contrast dividers instead of heavy borders everywhere.
+///
+/// <b>Switching themes at runtime.</b> Each color is one shared, mutable
+/// <see cref="SolidColorBrush"/>; <see cref="ApplyPalette"/> re-colors those same instances,
+/// so anything holding one follows a theme change immediately. Two rules make that work:
+/// code-built UI assigns the shared brush instance directly to a property (a Freezable set as
+/// a plain property value stays live), while XAML and control templates use
+/// <c>DynamicResource</c> keys instead (see <see cref="RegisterResources"/>) — a brush placed
+/// straight into a Style/Template setter, or into a ResourceDictionary, gets frozen and could
+/// never change color again.
 ///
 /// <see cref="Button"/>/<see cref="TextBox"/>/<see cref="ListBox"/> all need
 /// their own <see cref="ControlTemplate"/>, not just Background/Foreground
@@ -24,23 +31,100 @@ namespace TileTerm;
 /// </summary>
 internal static class Theme
 {
-    public static readonly Brush BgWindow = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E));
-    public static readonly Brush BgField = new SolidColorBrush(Color.FromRgb(0x2D, 0x2D, 0x2D));
-    public static readonly Brush BgList = new SolidColorBrush(Color.FromRgb(0x21, 0x21, 0x21));
-    public static readonly Brush BgHover = new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3A));
-    public static readonly Brush BgPressed = new SolidColorBrush(Color.FromRgb(0x48, 0x48, 0x48));
-    public static readonly Brush BorderCol = new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3A));
-    public static readonly Brush Fg = Brushes.Gainsboro;
-    public static readonly Brush FgMuted = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A));
-    public static readonly Brush FgDisabled = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x77));
-    public static readonly Brush Accent = new SolidColorBrush(Color.FromRgb(0x3A, 0x9B, 0xF5));
-    public static readonly Brush AccentHover = new SolidColorBrush(Color.FromRgb(0x5B, 0xAC, 0xF7));
+    private static SolidColorBrush NewBrush(Color color) => new(color);
+
+    public static readonly SolidColorBrush BgWindow = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush BgField = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush BgList = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush BgSidebar = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush BgHover = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush BgPressed = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush BgTitleBar = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush BgTitleHover = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush BorderCol = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush Fg = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush FgMuted = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush FgDisabled = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush Accent = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush AccentHover = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush PaneActiveBorder = NewBrush(Colors.Transparent);
+
+    // Tiles look the same in every theme (see TileScheme), so these never change color.
+    public static readonly SolidColorBrush TileHeaderBg = NewBrush(TileScheme.HeaderBg);
+    public static readonly SolidColorBrush TileFg = NewBrush(TileScheme.HeaderFg);
+    public static readonly SolidColorBrush TerminalBg = NewBrush(TileScheme.TerminalBg);
+    public static readonly SolidColorBrush TerminalFg = NewBrush(TileScheme.TerminalFg);
 
     /// <summary>Colors for the "既定/お気に入り" status glyphs in a profile list row.
     /// Deliberately not <see cref="Accent"/> — a gold star on an Accent-colored selected
     /// row would be nearly invisible; gold/pink both stay legible on either background.</summary>
-    public static readonly Brush GoldStar = new SolidColorBrush(Color.FromRgb(0xE0, 0xB0, 0x4A));
-    public static readonly Brush Favorite = new SolidColorBrush(Color.FromRgb(0xE0, 0x60, 0x7D));
+    public static readonly SolidColorBrush GoldStar = NewBrush(Colors.Transparent);
+    public static readonly SolidColorBrush Favorite = NewBrush(Colors.Transparent);
+
+    // DynamicResource keys for the brushes above (see the class summary).
+    private const string KeyBgField = "Theme.BgField";
+    private const string KeyBgHover = "Theme.BgHover";
+    private const string KeyBgPressed = "Theme.BgPressed";
+    private const string KeyBorder = "Theme.Border";
+    private const string KeyFg = "Theme.Fg";
+    private const string KeyFgMuted = "Theme.FgMuted";
+    private const string KeyFgDisabled = "Theme.FgDisabled";
+    private const string KeyAccent = "Theme.Accent";
+    private const string KeyAccentHover = "Theme.AccentHover";
+
+    private static DynamicResourceExtension Res(string key) => new(key);
+
+    private static ResourceDictionary? _resources;
+
+    /// <summary>The brushes that XAML and templates reach through <c>DynamicResource</c>, with
+    /// the palette color each one shows. Kept as one table so registering and re-coloring
+    /// can't drift apart.</summary>
+    private static readonly (string Key, SolidColorBrush Brush, Func<ThemePalette, Color> Pick)[] Shared =
+    {
+        ("Theme.BgWindow", BgWindow, p => p.BgWindow),
+        (KeyBgField, BgField, p => p.BgField),
+        ("Theme.BgList", BgList, p => p.BgList),
+        (KeyBgHover, BgHover, p => p.BgHover),
+        (KeyBgPressed, BgPressed, p => p.BgPressed),
+        ("Theme.BgTitleBar", BgTitleBar, p => p.BgTitleBar),
+        ("Theme.BgTitleHover", BgTitleHover, p => p.BgTitleHover),
+        ("Theme.BgSidebar", BgSidebar, p => p.BgSidebar),
+        (KeyBorder, BorderCol, p => p.Border),
+        (KeyFg, Fg, p => p.Fg),
+        (KeyFgMuted, FgMuted, p => p.FgMuted),
+        (KeyFgDisabled, FgDisabled, p => p.FgDisabled),
+        (KeyAccent, Accent, p => p.Accent),
+        (KeyAccentHover, AccentHover, p => p.AccentHover),
+    };
+
+    /// <summary>Publishes the palette as application resources so XAML and templates can
+    /// reference it with <c>{DynamicResource Theme.*}</c>. The resources are separate brush
+    /// instances from the shared ones above (a ResourceDictionary freezes the Freezables put in
+    /// it, which would make the shared brushes un-recolorable), so a theme change replaces
+    /// the resource entries — DynamicResource re-resolves on replacement — as well as re-coloring
+    /// the shared brushes that code-built UI holds directly.</summary>
+    public static void RegisterResources(ResourceDictionary resources)
+    {
+        _resources = resources;
+        foreach (var (key, brush, _) in Shared)
+            resources[key] = new SolidColorBrush(brush.Color);
+    }
+
+    /// <summary>Switches every brush — shared instances and registered resources — to <paramref name="palette"/>.</summary>
+    public static void ApplyPalette(ThemePalette palette)
+    {
+        foreach (var (key, brush, pick) in Shared)
+        {
+            var color = pick(palette);
+            brush.Color = color;
+            if (_resources is not null)
+                _resources[key] = new SolidColorBrush(color);
+        }
+
+        PaneActiveBorder.Color = palette.PaneActiveBorder;
+        GoldStar.Color = palette.GoldStar;
+        Favorite.Color = palette.Favorite;
+    }
 
     /// <summary>Corner radius for text fields and buttons. Kept small on purpose — JetBrains
     /// settings dialogs (the reference for this styling) use nearly square controls, and larger
@@ -51,18 +135,20 @@ internal static class Theme
     /// and the dialog stays as dense as the JetBrains reference (~24px controls).</summary>
     public const double ControlHeight = 24;
 
-    private static readonly ControlTemplate SharedButtonTemplate = BuildButtonTemplate(BgField, BgHover, BgPressed);
-    private static readonly ControlTemplate PrimaryButtonTemplate = BuildButtonTemplate(Accent, AccentHover, Accent);
+    private static readonly ControlTemplate SharedButtonTemplate = BuildButtonTemplate(KeyBgHover, KeyBgPressed);
+    private static readonly ControlTemplate PrimaryButtonTemplate = BuildButtonTemplate(KeyAccentHover, KeyAccent);
     private static readonly ControlTemplate TextBoxTemplate = BuildTextBoxTemplate();
     private static readonly Style ListBoxItemStyle = BuildListBoxItemStyle();
 
-    /// <summary>Applies the window-level dark theme: content background/foreground, and
-    /// (via <see cref="DarkTitleBar"/>) the OS-drawn title bar strip too.</summary>
+    static Theme() => ApplyPalette(ThemePalette.Dark);
+
+    /// <summary>Applies the window-level theme: content background/foreground, and
+    /// (via <see cref="TitleBarTheme"/>) the OS-drawn title bar strip too.</summary>
     public static void Apply(Window window)
     {
         window.Background = BgWindow;
         window.Foreground = Fg;
-        DarkTitleBar.Apply(window);
+        TitleBarTheme.Apply(window);
     }
 
     /// <summary>A secondary/flat button — every state (normal, hover, pressed, disabled)
@@ -146,8 +232,8 @@ internal static class Theme
         var box = new FrameworkElementFactory(typeof(Border)) { Name = "Box" };
         box.SetValue(FrameworkElement.WidthProperty, 14.0);
         box.SetValue(FrameworkElement.HeightProperty, 14.0);
-        box.SetValue(Border.BackgroundProperty, BgField);
-        box.SetValue(Border.BorderBrushProperty, BorderCol);
+        box.SetResourceReference(Border.BackgroundProperty, KeyBgField);
+        box.SetResourceReference(Border.BorderBrushProperty, KeyBorder);
         box.SetValue(Border.BorderThicknessProperty, new Thickness(1));
         box.SetValue(Border.CornerRadiusProperty, new CornerRadius(Radius));
         box.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
@@ -168,17 +254,17 @@ internal static class Theme
         template.VisualTree = root;
 
         var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(Border.BorderBrushProperty, FgMuted, "Box"));
+        hover.Setters.Add(new Setter(Border.BorderBrushProperty, Res(KeyFgMuted), "Box"));
         template.Triggers.Add(hover);
 
         var isChecked = new Trigger { Property = System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, Value = true };
-        isChecked.Setters.Add(new Setter(Border.BackgroundProperty, Accent, "Box"));
-        isChecked.Setters.Add(new Setter(Border.BorderBrushProperty, Accent, "Box"));
+        isChecked.Setters.Add(new Setter(Border.BackgroundProperty, Res(KeyAccent), "Box"));
+        isChecked.Setters.Add(new Setter(Border.BorderBrushProperty, Res(KeyAccent), "Box"));
         isChecked.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "Check"));
         template.Triggers.Add(isChecked);
 
         var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
-        disabled.Setters.Add(new Setter(Control.ForegroundProperty, FgDisabled));
+        disabled.Setters.Add(new Setter(Control.ForegroundProperty, Res(KeyFgDisabled)));
         disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.6, "Box"));
         template.Triggers.Add(disabled);
 
@@ -189,6 +275,41 @@ internal static class Theme
             Foreground = Fg,
             FontSize = 12,
             VerticalContentAlignment = VerticalAlignment.Center,
+        };
+    }
+
+    /// <summary>A selectable "card": a bordered panel around arbitrary content that acts as a radio
+    /// button — the border turns accent-colored when selected and mid-gray on hover. Used for the
+    /// theme picker, where each choice is a little preview rather than a text label.</summary>
+    public static RadioButton CardRadioButton(object content)
+    {
+        var template = new ControlTemplate(typeof(RadioButton));
+
+        var border = new FrameworkElementFactory(typeof(Border)) { Name = "Bd" };
+        border.SetResourceReference(Border.BackgroundProperty, KeyBgField);
+        border.SetResourceReference(Border.BorderBrushProperty, KeyBorder);
+        border.SetValue(Border.BorderThicknessProperty, new Thickness(2));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(Radius + 2));
+        border.SetValue(Border.PaddingProperty, new Thickness(8));
+        border.AppendChild(new FrameworkElementFactory(typeof(ContentPresenter)));
+        template.VisualTree = border;
+
+        // Later triggers win, so "checked" goes after "hover" and stays accent-colored under the mouse.
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BorderBrushProperty, Res(KeyFgMuted), "Bd"));
+        template.Triggers.Add(hover);
+
+        var isChecked = new Trigger { Property = ToggleButton.IsCheckedProperty, Value = true };
+        isChecked.Setters.Add(new Setter(Border.BorderBrushProperty, Res(KeyAccent), "Bd"));
+        template.Triggers.Add(isChecked);
+
+        return new RadioButton
+        {
+            Content = content,
+            Template = template,
+            Cursor = Cursors.Hand,
+            Focusable = true,
+            FocusVisualStyle = null,
         };
     }
 
@@ -234,7 +355,7 @@ internal static class Theme
         };
 
         var line = new FrameworkElementFactory(typeof(Border));
-        line.SetValue(Border.BackgroundProperty, BorderCol);
+        line.SetResourceReference(Border.BackgroundProperty, KeyBorder);
         line.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
         if (vertical)
         {
@@ -266,7 +387,7 @@ internal static class Theme
         SnapsToDevicePixels = true,
     };
 
-    private static ControlTemplate BuildButtonTemplate(Brush normal, Brush hoverBg, Brush pressedBg)
+    private static ControlTemplate BuildButtonTemplate(string hoverBgKey, string pressedBgKey)
     {
         var template = new ControlTemplate(typeof(Button));
 
@@ -285,17 +406,17 @@ internal static class Theme
         template.VisualTree = border;
 
         var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(Border.BackgroundProperty, hoverBg, "Bd"));
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, Res(hoverBgKey), "Bd"));
         template.Triggers.Add(hover);
 
         var pressed = new Trigger { Property = ButtonBase.IsPressedProperty, Value = true };
-        pressed.Setters.Add(new Setter(Border.BackgroundProperty, pressedBg, "Bd"));
+        pressed.Setters.Add(new Setter(Border.BackgroundProperty, Res(pressedBgKey), "Bd"));
         template.Triggers.Add(pressed);
 
         var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
-        disabled.Setters.Add(new Setter(Control.ForegroundProperty, FgDisabled));
-        disabled.Setters.Add(new Setter(Border.BackgroundProperty, BgField, "Bd"));
-        disabled.Setters.Add(new Setter(Border.BorderBrushProperty, BgField, "Bd"));
+        disabled.Setters.Add(new Setter(Control.ForegroundProperty, Res(KeyFgDisabled)));
+        disabled.Setters.Add(new Setter(Border.BackgroundProperty, Res(KeyBgField), "Bd"));
+        disabled.Setters.Add(new Setter(Border.BorderBrushProperty, Res(KeyBgField), "Bd"));
         template.Triggers.Add(disabled);
 
         return template;
@@ -321,11 +442,11 @@ internal static class Theme
         template.VisualTree = border;
 
         var focused = new Trigger { Property = UIElement.IsFocusedProperty, Value = true };
-        focused.Setters.Add(new Setter(Border.BorderBrushProperty, Accent, "Bd"));
+        focused.Setters.Add(new Setter(Border.BorderBrushProperty, Res(KeyAccent), "Bd"));
         template.Triggers.Add(focused);
 
         var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
-        disabled.Setters.Add(new Setter(Control.ForegroundProperty, FgDisabled));
+        disabled.Setters.Add(new Setter(Control.ForegroundProperty, Res(KeyFgDisabled)));
         template.Triggers.Add(disabled);
 
         return template;
@@ -348,18 +469,18 @@ internal static class Theme
         // Order matters: later triggers win when more than one applies at once, so the
         // "selected" look must be added after "hover" to stay on top of a hovered+selected row.
         var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(Border.BackgroundProperty, BgHover, "Bd"));
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, Res(KeyBgHover), "Bd"));
         template.Triggers.Add(hover);
 
         var selected = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
-        selected.Setters.Add(new Setter(Border.BackgroundProperty, Accent, "Bd"));
+        selected.Setters.Add(new Setter(Border.BackgroundProperty, Res(KeyAccent), "Bd"));
         selected.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
         template.Triggers.Add(selected);
 
         var style = new Style(typeof(ListBoxItem));
         style.Setters.Add(new Setter(Control.TemplateProperty, template));
         style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, Fg));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, Res(KeyFg)));
         style.Setters.Add(new Setter(FrameworkElement.FocusVisualStyleProperty, null));
         return style;
     }

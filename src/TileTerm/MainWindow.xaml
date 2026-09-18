@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:local="clr-namespace:TileTerm"
-        Title="TileTerm" Height="650" Width="1000" Background="#FF1E1E1E"
+        Title="TileTerm" Icon="Assets/TileTerm.ico" Height="650" Width="1000" Background="{DynamicResource Theme.BgWindow}"
         WindowStyle="None" ResizeMode="CanResize"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
 
@@ -25,7 +25,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#FF3F3F3F" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Theme.BgTitleHover}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -65,7 +65,7 @@
         </Grid.RowDefinitions>
 
         <!-- Custom title bar: replaces the OS chrome so the pane controls can live in it. -->
-        <Grid Grid.Row="0" Background="#FF1A1A1A">
+        <Grid Grid.Row="0" Background="{DynamicResource Theme.BgTitleBar}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -94,18 +94,18 @@
                     ToolTip="アクティブなタイルを閉じる" AutomationProperties.Name="アクティブなタイルを閉じる"
                     shell:WindowChrome.IsHitTestVisibleInChrome="True" />
 
-            <Border Grid.Column="4" Width="1" Margin="4,9" Background="#FF3A3A3A" IsHitTestVisible="False" />
+            <Border Grid.Column="4" Width="1" Margin="4,9" Background="{DynamicResource Theme.Border}" IsHitTestVisible="False" />
 
             <Button x:Name="SettingsButton" Grid.Column="5" Style="{StaticResource TitleBarButton}"
                     ToolTip="設定" AutomationProperties.Name="設定"
                     shell:WindowChrome.IsHitTestVisibleInChrome="True" />
 
-            <Border Grid.Column="6" Width="1" Margin="4,9" Background="#FF3A3A3A" IsHitTestVisible="False" />
+            <Border Grid.Column="6" Width="1" Margin="4,9" Background="{DynamicResource Theme.Border}" IsHitTestVisible="False" />
 
             <StackPanel x:Name="FavoritesPanel" Grid.Column="7" Orientation="Horizontal"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True" />
 
-            <TextBlock x:Name="VersionText" Grid.Column="8" Foreground="Gray" FontSize="11"
+            <TextBlock x:Name="VersionText" Grid.Column="8" Foreground="{DynamicResource Theme.FgMuted}" FontSize="11"
                        HorizontalAlignment="Right" VerticalAlignment="Center" Margin="10,0,10,0"
                        IsHitTestVisible="False" />
 

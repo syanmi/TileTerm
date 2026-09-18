@@ -117,7 +117,7 @@ public partial class MainWindow : Window
         panel.Children.Add(icon);
         panel.Children.Add(new TextBlock
         {
-            Text = profile.Name, FontSize = 12, Foreground = Brushes.Gainsboro,
+            Text = profile.Name, FontSize = 12, Foreground = Theme.Fg,
             Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
         });
         return panel;

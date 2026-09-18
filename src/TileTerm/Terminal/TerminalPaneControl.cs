@@ -73,7 +73,7 @@ public sealed class TerminalPaneControl : Grid
 
         _titleText = new TextBlock
         {
-            Foreground = Brushes.Gainsboro,
+            Foreground = Theme.TileFg,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(6, 0, 0, 0),
             FontSize = 12,
@@ -194,9 +194,9 @@ public sealed class TerminalPaneControl : Grid
     {
         bool hasText = _imeBox.Text.Length > 0;
         if (!hasText) _composing = false; // composition cancelled (e.g. Esc) or emptied
-        _imeBox.Foreground = hasText ? Brushes.Gainsboro : Brushes.Transparent;
-        _imeBox.Background = hasText ? Brushes.Black : Brushes.Transparent;
-        _imeBox.BorderBrush = hasText ? Brushes.Gainsboro : Brushes.Transparent;
+        _imeBox.Foreground = hasText ? Theme.TerminalFg : Brushes.Transparent;
+        _imeBox.Background = hasText ? Theme.TerminalBg : Brushes.Transparent;
+        _imeBox.BorderBrush = hasText ? Theme.TerminalFg : Brushes.Transparent;
 
         if (hasText && !_composing)
             Dispatcher.BeginInvoke(() => { if (!_composing) _imeBox.Clear(); });
@@ -206,19 +206,19 @@ public sealed class TerminalPaneControl : Grid
     {
         var panel = new DockPanel
         {
-            Background = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x25)),
+            Background = Theme.TileHeaderBg,
             LastChildFill = true,
             Cursor = Cursors.Hand,
         };
 
-        var closeButton = MakeButton(Icons.Close(13));
+        var closeButton = MakeButton(Icons.Close(13, ink: Theme.TileFg));
         closeButton.ToolTip = "このタイルを閉じる";
         AutomationProperties.SetName(closeButton, "このタイルを閉じる");
         closeButton.Click += (_, _) => CloseRequested?.Invoke();
         DockPanel.SetDock(closeButton, Dock.Right);
         panel.Children.Add(closeButton);
 
-        var refreshButton = MakeButton(Icons.Refresh());
+        var refreshButton = MakeButton(Icons.Refresh(ink: Theme.TileFg));
         refreshButton.ToolTip = "このタイルのコンソールを再起動";
         AutomationProperties.SetName(refreshButton, "このタイルのコンソールを再起動");
         refreshButton.Click += (_, _) => RestartSession();
@@ -351,7 +351,7 @@ public sealed class TerminalPaneControl : Grid
         Margin = new Thickness(1),
         Background = Brushes.Transparent,
         BorderThickness = new Thickness(0),
-        Foreground = Brushes.Gainsboro,
+        Foreground = Theme.TileFg,
     };
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -397,7 +397,7 @@ public sealed class TerminalPaneControl : Grid
     }
 
     public void SetActive(bool active) =>
-        _activeBorder.BorderBrush = active ? Brushes.DodgerBlue : Brushes.Transparent;
+        _activeBorder.BorderBrush = active ? Theme.PaneActiveBorder : Brushes.Transparent;
 
     public void FocusCanvas() => _imeBox.Focus();
 

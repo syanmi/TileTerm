@@ -7,16 +7,20 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using TileTerm.Terminal;
+using Rectangle = System.Windows.Shapes.Rectangle;
 
 namespace TileTerm;
 
 /// <summary>
-/// The app's settings dialog. Has a category sidebar on the left (only
-/// "プロンプト" exists today, but the structure leaves room for more) and,
-/// for that category, the profile list + editor on the right: add/edit/remove
+/// The app's settings dialog. Has a category sidebar on the left with two
+/// categories today — "プロンプト" and "テーマ" — and the matching page on the right.
+/// "プロンプト" is the profile list + editor: add/edit/remove
 /// profiles, pick which one is the 既定 (default), and mark any number of
-/// them as お気に入り (favorites). Backed by <see cref="ProfileStore"/>, which
-/// persists to <c>%AppData%\TileTerm\profiles.json</c>.
+/// them as お気に入り (favorites), backed by <see cref="ProfileStore"/>, which
+/// persists to <c>%AppData%\TileTerm\profiles.json</c>. "テーマ" picks the
+/// dark/light theme (see <see cref="ThemeManager"/>, persisted to <c>settings.json</c>);
+/// like the profile edits it takes effect on 適用/OK, and the whole app — this dialog
+/// included — re-colors on the spot.
 ///
 /// Modeled on the JetBrains (CLion) settings dialog: a flush category list |
 /// list-with-toolbar | form, with draggable splitters between them; form rows put
@@ -50,6 +54,16 @@ public sealed class SettingsWindow : Window
         Margin = new Thickness(8, 3, 0, 0), Visibility = Visibility.Collapsed,
         ToolTip = "アイコンを実行ファイルのアイコンに戻します",
     };
+    private readonly TextBlock _headerText = new()
+    {
+        Foreground = Theme.Fg, FontSize = 13, FontWeight = FontWeights.SemiBold,
+        Margin = new Thickness(16, 12, 16, 10),
+    };
+    private readonly RadioButton _darkRadio;
+    private readonly RadioButton _lightRadio;
+    private Grid _promptBody = null!;
+    private StackPanel _themePanel = null!;
+    private ThemeKind _pendingTheme = ThemeManager.Current;
     private string _iconPath = "";
     private ProfileDefinition? _editing;
     private bool _suppressToggleEvents;
@@ -58,6 +72,8 @@ public sealed class SettingsWindow : Window
     public SettingsWindow(ProfileStore store)
     {
         _store = store;
+        _darkRadio = BuildThemeCard("ダーク", ThemePalette.Dark);
+        _lightRadio = BuildThemeCard("ライト", ThemePalette.Light);
         Title = "TileTerm - 設定";
         Width = 920;
         Height = 540;
@@ -106,13 +122,13 @@ public sealed class SettingsWindow : Window
         main.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 380 });
 
-        // Category sidebar — just one category today; structured so more can be added later.
-        // Rows run flush edge to edge, like the JetBrains settings tree.
+        // Category sidebar. Rows run flush edge to edge, like the JetBrains settings tree.
         var categoryList = Theme.ListBox();
         categoryList.BorderThickness = new Thickness(0);
-        categoryList.Background = Theme.BgList;
+        categoryList.Background = Theme.BgSidebar;
         categoryList.Items.Add("プロンプト");
-        categoryList.SelectedIndex = 0;
+        categoryList.Items.Add("テーマ");
+        categoryList.SelectionChanged += (_, _) => ShowCategory(categoryList.SelectedIndex);
         Grid.SetColumn(categoryList, 0);
         main.Children.Add(categoryList);
 
@@ -124,22 +140,127 @@ public sealed class SettingsWindow : Window
         rightSide.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         rightSide.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-        var header = new TextBlock
-        {
-            Text = "プロンプト", Foreground = Theme.Fg, FontSize = 13, FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(16, 12, 16, 10),
-        };
-        Grid.SetRow(header, 0);
-        rightSide.Children.Add(header);
+        Grid.SetRow(_headerText, 0);
+        rightSide.Children.Add(_headerText);
 
-        var body = BuildBody();
-        Grid.SetRow(body, 1);
-        rightSide.Children.Add(body);
+        // Both category pages share the same cell; ShowCategory shows one and collapses the other.
+        _promptBody = BuildBody();
+        Grid.SetRow(_promptBody, 1);
+        rightSide.Children.Add(_promptBody);
+
+        _themePanel = BuildThemePanel();
+        Grid.SetRow(_themePanel, 1);
+        rightSide.Children.Add(_themePanel);
 
         Grid.SetColumn(rightSide, 2);
         main.Children.Add(rightSide);
 
+        categoryList.SelectedIndex = 0; // after the pages exist: this raises SelectionChanged
+
         return main;
+    }
+
+    private void ShowCategory(int index)
+    {
+        bool themePage = index == 1;
+        _headerText.Text = themePage ? "テーマ" : "プロンプト";
+        _promptBody.Visibility = themePage ? Visibility.Collapsed : Visibility.Visible;
+        _themePanel.Visibility = themePage ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>The "テーマ" page: two preview cards (each a miniature of the app in that theme),
+    /// exactly one of which is selected. Selecting only marks the choice pending — it is applied
+    /// by 適用/OK, like the profile edits.</summary>
+    private StackPanel BuildThemePanel()
+    {
+        _darkRadio.IsChecked = _pendingTheme == ThemeKind.Dark;
+        _lightRadio.IsChecked = _pendingTheme == ThemeKind.Light;
+        _darkRadio.Checked += (_, _) => SetPendingTheme(ThemeKind.Dark);
+        _lightRadio.Checked += (_, _) => SetPendingTheme(ThemeKind.Light);
+
+        var cards = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+        _lightRadio.Margin = new Thickness(14, 0, 0, 0);
+        cards.Children.Add(_darkRadio);
+        cards.Children.Add(_lightRadio);
+
+        var panel = new StackPanel { Margin = new Thickness(16, 0, 16, 14), Visibility = Visibility.Collapsed };
+        panel.Children.Add(Theme.Label("配色テーマ"));
+        panel.Children.Add(Theme.Hint("アプリ全体の配色を切り替えます。「適用」または「OK」で反映されます。"));
+        panel.Children.Add(cards);
+        return panel;
+    }
+
+    private void SetPendingTheme(ThemeKind mode)
+    {
+        _pendingTheme = mode;
+        UpdateApplyState();
+    }
+
+    private static RadioButton BuildThemeCard(string label, ThemePalette palette)
+    {
+        var content = new StackPanel();
+        content.Children.Add(BuildThemePreview(palette));
+        content.Children.Add(new TextBlock
+        {
+            Text = label, Foreground = Theme.Fg, FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 8, 0, 0),
+        });
+
+        var radio = Theme.CardRadioButton(content);
+        radio.GroupName = "theme";
+        AutomationProperties.SetName(radio, label);
+        return radio;
+    }
+
+    /// <summary>A miniature of the app window drawn in <paramref name="palette"/>'s own colors —
+    /// fixed, not tied to the live theme, so each card always shows the theme it stands for:
+    /// title bar, an active (accent-bordered) pane on the left and two stacked panes on the right.</summary>
+    private static UIElement BuildThemePreview(ThemePalette p)
+    {
+        const double w = 156, h = 92;
+        var canvas = new Canvas { Width = w, Height = h, ClipToBounds = true };
+
+        static SolidColorBrush Solid(Color c) => new(c);
+        static Rectangle Box(double x, double y, double width, double height, Brush? fill, Brush? stroke = null, double thickness = 0)
+        {
+            var r = new Rectangle { Width = width, Height = height, Fill = fill, Stroke = stroke, StrokeThickness = thickness };
+            Canvas.SetLeft(r, x);
+            Canvas.SetTop(r, y);
+            return r;
+        }
+
+        canvas.Children.Add(Box(0, 0, w, h, Solid(p.BgWindow)));
+        canvas.Children.Add(Box(0, 0, w, 13, Solid(p.BgTitleBar)));
+        canvas.Children.Add(Box(6, 3.5, 6, 6, Solid(p.Accent)));
+        for (int i = 0; i < 3; i++)
+            canvas.Children.Add(Box(126 + i * 9, 5, 4, 4, Solid(p.FgMuted)));
+
+        // One pane: header strip, then the terminal area with a few "text" lines in ANSI colors.
+        void Pane(double x, double y, double width, double height, bool active, params (int Idx, double Width)[] lines)
+        {
+            // Tiles are the same in every theme (TileScheme); only the chrome around them differs.
+            canvas.Children.Add(Box(x, y, width, height, Solid(TileScheme.TerminalBg)));
+            canvas.Children.Add(Box(x, y, width, 7, Solid(TileScheme.HeaderBg)));
+            double ly = y + 11;
+            foreach (var (idx, lineWidth) in lines)
+            {
+                var c = idx < 0 ? TileScheme.TerminalFg : TileScheme.Ansi16[idx];
+                canvas.Children.Add(Box(x + 5, ly, Math.Min(lineWidth, width - 10), 2.5, Solid(c)));
+                ly += 6;
+            }
+            if (active)
+                canvas.Children.Add(Box(x, y, width, height, null, Solid(p.PaneActiveBorder), 1.5));
+        }
+
+        Pane(4, 16, 76, 72, active: true, (-1, 22), (2, 44), (4, 30), (-1, 52), (3, 26));
+        Pane(84, 16, 68, 34, active: false, (-1, 30), (6, 40));
+        Pane(84, 54, 68, 34, active: false, (2, 36), (-1, 24));
+
+        return new Border
+        {
+            Child = canvas, BorderBrush = Solid(p.Border), BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
     }
 
     private Grid BuildBody()
@@ -444,9 +565,12 @@ public sealed class SettingsWindow : Window
     private (string, string, string, string, string) CurrentFields() =>
         (_nameBox.Text, _iconPath, _exeBox.Text, _argsBox.Text, _cwdBox.Text);
 
-    /// <summary>適用 is only meaningful while the form differs from what was loaded into it.</summary>
-    private void UpdateApplyState() =>
-        _applyButton.IsEnabled = _editing is not null && CurrentFields() != _loadedFields;
+    private bool ProfileDirty => _editing is not null && CurrentFields() != _loadedFields;
+    private bool ThemeDirty => _pendingTheme != ThemeManager.Current;
+
+    /// <summary>適用 is only meaningful while something differs from what is currently in effect:
+    /// the profile form vs. what was loaded into it, or the chosen theme vs. the active one.</summary>
+    private void UpdateApplyState() => _applyButton.IsEnabled = ProfileDirty || ThemeDirty;
 
     private void LoadSelected()
     {
@@ -478,6 +602,13 @@ public sealed class SettingsWindow : Window
     }
 
     private void ApplyEdits()
+    {
+        if (ThemeDirty) ThemeManager.Set(_pendingTheme);
+        if (ProfileDirty) ApplyProfileEdits();
+        UpdateApplyState();
+    }
+
+    private void ApplyProfileEdits()
     {
         if (_editing is null) return;
 

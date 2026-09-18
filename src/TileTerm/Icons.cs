@@ -15,29 +15,29 @@ namespace TileTerm;
 /// </summary>
 internal static class Icons
 {
-    private static readonly Brush Ink = Brushes.Gainsboro;
+    // The shared theme foreground brush itself (not a copy): its color changes with the theme,
+    // so every icon drawn with it follows a light/dark switch without being rebuilt.
+    private static readonly Brush Ink = Theme.Fg;
 
-    /// <summary>App icon: a 2x2 grid of tiles, standing in for "tiled terminal panes"
-    /// — drawn rather than a font glyph so it's never a mysterious misaligned symbol
-    /// (a real risk with symbol-block Unicode characters across fonts/DPI).</summary>
-    public static UIElement App(double size = 16)
+    private static readonly Lazy<ImageSource> AppIconSource = new(() =>
     {
-        var canvas = new Canvas { Width = size, Height = size };
-        double gap = size * 0.14;
-        double cell = (size - gap) / 2.0;
-        var brush = new SolidColorBrush(Color.FromRgb(0x3A, 0x9B, 0xF5));
+        var bitmap = new System.Windows.Media.Imaging.BitmapImage();
+        bitmap.BeginInit();
+        bitmap.UriSource = new Uri("pack://application:,,,/Assets/TileTerm-titlebar.png", UriKind.Absolute);
+        bitmap.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+        bitmap.EndInit();
+        bitmap.Freeze();
+        return bitmap;
+    });
 
-        void AddTile(double x, double y) => canvas.Children.Add(new Rectangle
-        {
-            Width = cell, Height = cell, Fill = brush, RadiusX = 1.5, RadiusY = 1.5,
-        }.At(x, y));
-
-        AddTile(0, 0);
-        AddTile(cell + gap, 0);
-        AddTile(0, cell + gap);
-        AddTile(cell + gap, cell + gap);
-
-        return canvas;
+    /// <summary>The app's own icon (the same mark as the exe/taskbar icon), for the title bar.
+    /// A separate small PNG rather than the .ico so the mark is tuned for this size: an ICO
+    /// shown through an Image picks one frame and scales it, which blurs at 18px.</summary>
+    public static UIElement App(double size = 18)
+    {
+        var image = new Image { Source = AppIconSource.Value, Width = size, Height = size, Stretch = Stretch.Uniform };
+        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+        return image;
     }
 
     public static UIElement SplitRight() => BuildSplit(vertical: true);
@@ -57,7 +57,7 @@ internal static class Icons
             canvas.Children.Add(new Line { X1 = 8, Y1 = 1, X2 = 8, Y2 = 15, Stroke = Ink, StrokeThickness = 1.3 });
             canvas.Children.Add(new Rectangle
             {
-                Width = 5.7, Height = 12.4, Fill = new SolidColorBrush(Color.FromArgb(130, 200, 200, 200)),
+                Width = 5.7, Height = 12.4, Fill = Ink, Opacity = 0.5,
             }.At(8.3, 1.3));
         }
         else
@@ -65,7 +65,7 @@ internal static class Icons
             canvas.Children.Add(new Line { X1 = 1, Y1 = 8, X2 = 15, Y2 = 8, Stroke = Ink, StrokeThickness = 1.3 });
             canvas.Children.Add(new Rectangle
             {
-                Width = 12.4, Height = 5.7, Fill = new SolidColorBrush(Color.FromArgb(130, 200, 200, 200)),
+                Width = 12.4, Height = 5.7, Fill = Ink, Opacity = 0.5,
             }.At(1.3, 8.3));
         }
 
@@ -103,12 +103,15 @@ internal static class Icons
         return canvas;
     }
 
-    public static UIElement Close(double size = 16, double thickness = 1.4)
+    /// <summary>The × glyph. <paramref name="ink"/> overrides the theme foreground — tiles keep
+    /// their dark look in every theme, so their buttons need light strokes even in the light theme.</summary>
+    public static UIElement Close(double size = 16, double thickness = 1.4, Brush? ink = null)
     {
+        var stroke = ink ?? Ink;
         var canvas = new Canvas { Width = size, Height = size };
         double m = size * 0.2;
-        canvas.Children.Add(Cap(new Line { X1 = m, Y1 = m, X2 = size - m, Y2 = size - m, Stroke = Ink, StrokeThickness = thickness }));
-        canvas.Children.Add(Cap(new Line { X1 = size - m, Y1 = m, X2 = m, Y2 = size - m, Stroke = Ink, StrokeThickness = thickness }));
+        canvas.Children.Add(Cap(new Line { X1 = m, Y1 = m, X2 = size - m, Y2 = size - m, Stroke = stroke, StrokeThickness = thickness }));
+        canvas.Children.Add(Cap(new Line { X1 = size - m, Y1 = m, X2 = m, Y2 = size - m, Stroke = stroke, StrokeThickness = thickness }));
         return canvas;
     }
 
@@ -117,9 +120,9 @@ internal static class Icons
     /// design tool, and this glyph is a plain, well-supported Unicode symbol (not a
     /// private-use icon-font codepoint), so it doesn't carry the font-availability
     /// risk that ruled out icon fonts elsewhere in this project.</summary>
-    public static UIElement Refresh(double fontSize = 13) => new TextBlock
+    public static UIElement Refresh(double fontSize = 13, Brush? ink = null) => new TextBlock
     {
-        Text = "↻", Foreground = Ink, FontSize = fontSize,
+        Text = "↻", Foreground = ink ?? Ink, FontSize = fontSize,
         VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center,
     };
 
@@ -135,7 +138,7 @@ internal static class Icons
         canvas.Children.Add(new Rectangle { Width = size, Height = size, Stroke = Ink, StrokeThickness = thickness }.At(3, 0));
         canvas.Children.Add(new Rectangle
         {
-            Width = size, Height = size, Stroke = Ink, StrokeThickness = thickness, Fill = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A)),
+            Width = size, Height = size, Stroke = Ink, StrokeThickness = thickness, Fill = Theme.BgTitleBar,
         }.At(0, 3));
         return canvas;
     }
