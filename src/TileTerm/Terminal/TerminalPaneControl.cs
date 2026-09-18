@@ -164,7 +164,6 @@ public sealed class TerminalPaneControl : Grid
             _canvas.Focus();
         };
         panel.PreviewMouseMove += OnHeaderPreviewMouseMove;
-        panel.GiveFeedback += OnHeaderGiveFeedback;
 
         return panel;
     }
@@ -179,18 +178,12 @@ public sealed class TerminalPaneControl : Grid
             return;
 
         _dragStartPoint = null;
+        // Deliberately not customizing the drag cursor (no GiveFeedback handler) — the
+        // grab-hand cursor is for "you can pick this up" (hover, still not dragging), and
+        // VSCode's own tile drag doesn't keep a grab cursor once the drag is underway either.
+        // WPF's default drag cursors (arrow, "forbidden" circle-slash over invalid targets)
+        // apply here instead.
         DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(DragFormat, PaneId), DragDropEffects.Move);
-    }
-
-    /// <summary>Keeps the grab-hand cursor showing for the whole drag, including over
-    /// positions that aren't valid drop targets — WPF's default drag cursors (a "forbidden"
-    /// circle-slash whenever <see cref="DragEventArgs.Effects"/> is <see cref="DragDropEffects.None"/>)
-    /// read as an error rather than "you're dragging a tile", so they're suppressed entirely.</summary>
-    private static void OnHeaderGiveFeedback(object sender, GiveFeedbackEventArgs e)
-    {
-        e.UseDefaultCursors = false;
-        Mouse.SetCursor(Cursors.Hand);
-        e.Handled = true;
     }
 
     private void OnDragOver(object sender, DragEventArgs e)
@@ -344,6 +337,15 @@ public sealed class TerminalPaneControl : Grid
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // While an IME composition is in progress, WPF reports every key it intercepts
+        // (including Enter/Escape/Space/arrows used to convert and confirm candidates) as
+        // Key.ImeProcessed rather than its literal key. Mapping and sending those straight
+        // to the terminal — e.g. turning a conversion-confirming Enter into a literal
+        // newline — hijacks the key before the IME can finish composing, so full-width
+        // (zenkaku) input never completes. Leave these alone; the composed text still
+        // arrives normally through PreviewTextInput once it's confirmed.
+        if (e.Key == Key.ImeProcessed) return;
+
         var terminal = Session?.Terminal;
         if (terminal is null) return;
 

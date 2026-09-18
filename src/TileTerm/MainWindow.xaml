@@ -73,6 +73,8 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -91,21 +93,30 @@
             <Button x:Name="CloseTileButton" Grid.Column="3" Style="{StaticResource TitleBarButton}"
                     ToolTip="アクティブなタイルを閉じる" AutomationProperties.Name="アクティブなタイルを閉じる"
                     shell:WindowChrome.IsHitTestVisibleInChrome="True" />
-            <Button x:Name="SettingsButton" Grid.Column="4" Style="{StaticResource TitleBarButton}"
+
+            <Border Grid.Column="4" Width="1" Margin="4,9" Background="#FF3A3A3A" IsHitTestVisible="False" />
+
+            <Button x:Name="SettingsButton" Grid.Column="5" Style="{StaticResource TitleBarButton}"
                     ToolTip="設定" AutomationProperties.Name="設定"
                     shell:WindowChrome.IsHitTestVisibleInChrome="True" />
 
-            <StackPanel x:Name="FavoritesPanel" Grid.Column="5" Orientation="Horizontal"
+            <Border Grid.Column="6" Width="1" Margin="4,9" Background="#FF3A3A3A" IsHitTestVisible="False" />
+
+            <StackPanel x:Name="FavoritesPanel" Grid.Column="7" Orientation="Horizontal"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True" />
 
-            <TextBlock Grid.Column="6" Text="TileTerm" Foreground="Gray" FontSize="11"
-                       VerticalAlignment="Center" Margin="10,0,0,0" IsHitTestVisible="False" />
+            <DockPanel Grid.Column="8" LastChildFill="False" Margin="10,0,10,0" IsHitTestVisible="False">
+                <TextBlock DockPanel.Dock="Left" Text="TileTerm" Foreground="Gray" FontSize="11"
+                           VerticalAlignment="Center" />
+                <TextBlock x:Name="VersionText" DockPanel.Dock="Right" Foreground="Gray" FontSize="11"
+                           VerticalAlignment="Center" />
+            </DockPanel>
 
-            <Button x:Name="MinimizeButton" Grid.Column="7" Style="{StaticResource WindowControlButton}"
+            <Button x:Name="MinimizeButton" Grid.Column="9" Style="{StaticResource WindowControlButton}"
                     ToolTip="最小化" AutomationProperties.Name="最小化" shell:WindowChrome.IsHitTestVisibleInChrome="True" />
-            <Button x:Name="MaximizeButton" Grid.Column="8" Style="{StaticResource WindowControlButton}"
+            <Button x:Name="MaximizeButton" Grid.Column="10" Style="{StaticResource WindowControlButton}"
                     ToolTip="最大化" AutomationProperties.Name="最大化" shell:WindowChrome.IsHitTestVisibleInChrome="True" />
-            <Button x:Name="CloseWindowButton" Grid.Column="9" Style="{StaticResource TitleBarCloseButton}"
+            <Button x:Name="CloseWindowButton" Grid.Column="11" Style="{StaticResource TitleBarCloseButton}"
                     ToolTip="閉じる" AutomationProperties.Name="閉じる" shell:WindowChrome.IsHitTestVisibleInChrome="True" />
         </Grid>
 

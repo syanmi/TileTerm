@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -32,6 +33,11 @@ public partial class MainWindow : Window
         MinimizeButton.Content = Icons.Minimize();
         MaximizeButton.Content = Icons.Maximize();
         CloseWindowButton.Content = Icons.Close();
+
+        // Not AssemblyInformationalVersionAttribute: the SDK appends a "+<git sha>" suffix
+        // to it automatically in a git repo, which is far too long for the title bar.
+        var version = Assembly.GetExecutingAssembly().GetName().Version;
+        VersionText.Text = version is null ? "" : $"v{version.Major}.{version.Minor}.{version.Build}";
 
         Loaded += OnLoaded;
         Closing += OnClosing;
@@ -68,6 +74,7 @@ public partial class MainWindow : Window
         _profileStore.Load();
         var initial = _profileStore.GetDefaultProfile() ?? new ProfileDefinition();
         _paneManager = new PaneManager(PaneHost, initial);
+        _paneManager.LastPaneCloseRequested += () => Close();
         RebuildFavoritesBar();
     }
 

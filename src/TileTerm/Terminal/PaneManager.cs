@@ -69,11 +69,18 @@ public sealed class PaneManager
         SetActive(newLeaf);
     }
 
-    /// <summary>Closes <paramref name="target"/>, giving its sibling the freed space.</summary>
+    /// <summary>Closes <paramref name="target"/>, giving its sibling the freed space. If
+    /// <paramref name="target"/> is the sole remaining pane, there's nothing to collapse
+    /// into — closing "the last tile" is then the same thing as closing the window, so this
+    /// defers to <see cref="LastPaneCloseRequested"/> instead of closing the pane itself.</summary>
     public void Close(LeafNode target)
     {
         var sibling = DetachLeafFromTree(target);
-        if (sibling is null) return; // was the sole remaining pane — nothing to collapse into, so refuse.
+        if (sibling is null)
+        {
+            LastPaneCloseRequested?.Invoke();
+            return;
+        }
 
         target.Control.Shutdown();
 
@@ -81,6 +88,11 @@ public sealed class PaneManager
         SetActive(nextActive);
         nextActive.Control.FocusCanvas();
     }
+
+    /// <summary>Raised when closing the sole remaining pane is requested — the caller
+    /// (<see cref="MainWindow"/>) should treat this the same as its own close button, e.g.
+    /// showing the same confirmation dialog before actually shutting down.</summary>
+    public event Action? LastPaneCloseRequested;
 
     /// <summary>
     /// Swaps two panes' positions in the layout (they trade places; each keeps its
