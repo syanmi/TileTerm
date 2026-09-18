@@ -6,6 +6,12 @@
 
 `src/TileTerm/TileTerm.csproj` の `Version`/`AssemblyVersion`/`FileVersion` で管理する。対応するgitタグ（`vX.Y.Z`、annotated tag）をマイルストーンの区切りごとに打つ。**v0.1.0**（2026-09-18）が最初のタグで、M1〜M10（コンセプト機能一式＋UIの各種修正）までを含む。バージョンを上げる際は、csprojの値を更新するコミットを作ってからタグを打つこと（タグの指すコミットとcsprojの値が一致するように）。
 
+## Gitの運用
+
+- リモートは`https://github.com/syanmi/TileTerm`(公開)。ブランチは`master`。
+- **コミットメッセージに`Co-Authored-By: Claude ...`の行(共同作者トレーラー)を付けない。** GitHubのContributorsはこの行のメールアドレスも数えるため、付けるとClaudeが貢献者として表示されてしまう(`git log`の作者欄には出ないので気づきにくい)。2026-09-19に、既存の全24コミットからこの行を取り除いて履歴を書き換え、`master`と`v0.1.0`を強制プッシュした(ファイル内容・作者・日付・件名は変えていない)。**別の場所のcloneが古い履歴を持っている場合は、そこから`push`し直さないこと**(古いコミットが復活する)。作り直すか`git fetch`して`git reset --hard origin/master`する
+- 履歴書き換え前の状態は、ローカルのブランチ`backup/pre-rewrite`(トレーラー付きの旧履歴)に残してある。不要になったら`git branch -D backup/pre-rewrite`で消してよい(リモートには上げていない)
+
 ## コンセプト・狙い
 
 - コンソールアプリを操作するための Terminal ツール
