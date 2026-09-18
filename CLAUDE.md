@@ -9,8 +9,9 @@
 ## Gitの運用
 
 - リモートは`https://github.com/syanmi/TileTerm`(公開)。ブランチは`master`。
-- **コミットメッセージに`Co-Authored-By: Claude ...`の行(共同作者トレーラー)を付けない。** GitHubのContributorsはこの行のメールアドレスも数えるため、付けるとClaudeが貢献者として表示されてしまう(`git log`の作者欄には出ないので気づきにくい)。2026-09-19に、既存の全24コミットからこの行を取り除いて履歴を書き換え、`master`と`v0.1.0`を強制プッシュした(ファイル内容・作者・日付・件名は変えていない)。**別の場所のcloneが古い履歴を持っている場合は、そこから`push`し直さないこと**(古いコミットが復活する)。作り直すか`git fetch`して`git reset --hard origin/master`する
-- 履歴書き換え前の状態は、ローカルのブランチ`backup/pre-rewrite`(トレーラー付きの旧履歴)に残してある。不要になったら`git branch -D backup/pre-rewrite`で消してよい(リモートには上げていない)
+- **コミットメッセージ(とタグのメッセージ)にClaudeの帰属を示す行を付けない**。具体的には`Co-Authored-By: Claude ...`(共同作者トレーラー)と`Claude-Session: https://claude.ai/code/...`の2種類。GitHubのContributorsは`Co-Authored-By`のメールアドレスも数えるため、付けるとClaudeが貢献者として表示されてしまう(`git log`の作者欄には出ないので気づきにくい)。2026-09-19に、既存の全コミットとタグ`v0.1.0`からこの2種類の行を取り除いて履歴を書き換え、`master`と`v0.1.0`を強制プッシュした(ファイル内容・作者・日付・件名は変えていない。`git filter-branch --msg-filter`で該当行だけを削除し、タグは元の作成日時のまま本文を清掃して付け直した)
+- **別の場所のcloneが古い履歴を持っている場合は、そこから`push`し直さないこと**(古いコミットが復活する)。作り直すか、`git fetch`して`git reset --hard origin/master`する
+- 履歴を書き換えた後は、`git filter-branch`が自動で作る退避用の参照`refs/original/`(ローカルのみ)が残るので、確認後に`git update-ref -d`で消す。ブランチ一覧(`git branch`)には出ないので見落としやすい
 
 ## コンセプト・狙い
 
