@@ -1,12 +1,21 @@
 using System.Windows.Media;
+using XTerm.Common;
 
 namespace TileTerm.Terminal;
 
 /// <summary>
 /// Converts the color values XTerm.NET reports per cell
 /// (<c>AttributeData.GetFgColor()</c> / <c>GetBgColor()</c>, together with
-/// their "mode": 0 = terminal default, 1 = 256-color palette index,
-/// 2 = 24-bit RGB) into WPF <see cref="Color"/> values.
+/// their <see cref="ColorMode"/>) into WPF <see cref="Color"/> values.
+///
+/// <see cref="ColorMode"/> only has two values, <c>Palette256 = 0</c> and
+/// <c>RGB = 1</c> — there is no separate "default color" mode, despite what
+/// XTerm.NET's own README usage sample implies. An unset foreground/background
+/// is instead reported as a <see cref="ColorMode.Palette256"/> color one past
+/// the valid 0-255 index range (256 for foreground, 257 for background;
+/// verified via <c>AttributeData.Default</c>), so <see cref="Resolve"/> treats
+/// any out-of-range palette index as "use the fallback" rather than hardcoding
+/// those two exact sentinel values.
 /// </summary>
 internal static class AnsiPalette
 {
@@ -37,12 +46,9 @@ internal static class AnsiPalette
     public static Color DefaultForeground { get; } = Color.FromRgb(0xE5, 0xE5, 0xE5);
     public static Color DefaultBackground { get; } = Colors.Black;
 
-    public static Color Resolve(int color, int mode, Color fallback) => mode switch
-    {
-        1 => FromIndex(color),
-        2 => Color.FromRgb((byte)((color >> 16) & 0xFF), (byte)((color >> 8) & 0xFF), (byte)(color & 0xFF)),
-        _ => fallback,
-    };
+    public static Color Resolve(int color, int mode, Color fallback) => mode == (int)ColorMode.RGB
+        ? Color.FromRgb((byte)((color >> 16) & 0xFF), (byte)((color >> 8) & 0xFF), (byte)(color & 0xFF))
+        : color is >= 0 and <= 255 ? FromIndex(color) : fallback;
 
     private static Color FromIndex(int index)
     {

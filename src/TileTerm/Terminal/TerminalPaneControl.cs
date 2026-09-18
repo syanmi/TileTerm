@@ -137,6 +137,7 @@ public sealed class TerminalPaneControl : Grid
         {
             Background = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x25)),
             LastChildFill = true,
+            Cursor = Cursors.Hand,
         };
 
         var closeButton = MakeButton(Icons.Close(13));
@@ -163,6 +164,7 @@ public sealed class TerminalPaneControl : Grid
             _canvas.Focus();
         };
         panel.PreviewMouseMove += OnHeaderPreviewMouseMove;
+        panel.GiveFeedback += OnHeaderGiveFeedback;
 
         return panel;
     }
@@ -178,6 +180,17 @@ public sealed class TerminalPaneControl : Grid
 
         _dragStartPoint = null;
         DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(DragFormat, PaneId), DragDropEffects.Move);
+    }
+
+    /// <summary>Keeps the grab-hand cursor showing for the whole drag, including over
+    /// positions that aren't valid drop targets — WPF's default drag cursors (a "forbidden"
+    /// circle-slash whenever <see cref="DragEventArgs.Effects"/> is <see cref="DragDropEffects.None"/>)
+    /// read as an error rather than "you're dragging a tile", so they're suppressed entirely.</summary>
+    private static void OnHeaderGiveFeedback(object sender, GiveFeedbackEventArgs e)
+    {
+        e.UseDefaultCursors = false;
+        Mouse.SetCursor(Cursors.Hand);
+        e.Handled = true;
     }
 
     private void OnDragOver(object sender, DragEventArgs e)
