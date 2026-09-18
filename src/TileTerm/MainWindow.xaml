@@ -105,12 +105,9 @@
             <StackPanel x:Name="FavoritesPanel" Grid.Column="7" Orientation="Horizontal"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True" />
 
-            <DockPanel Grid.Column="8" LastChildFill="False" Margin="10,0,10,0" IsHitTestVisible="False">
-                <TextBlock DockPanel.Dock="Left" Text="TileTerm" Foreground="Gray" FontSize="11"
-                           VerticalAlignment="Center" />
-                <TextBlock x:Name="VersionText" DockPanel.Dock="Right" Foreground="Gray" FontSize="11"
-                           VerticalAlignment="Center" />
-            </DockPanel>
+            <TextBlock x:Name="VersionText" Grid.Column="8" Foreground="Gray" FontSize="11"
+                       HorizontalAlignment="Right" VerticalAlignment="Center" Margin="10,0,10,0"
+                       IsHitTestVisible="False" />
 
             <Button x:Name="MinimizeButton" Grid.Column="9" Style="{StaticResource WindowControlButton}"
                     ToolTip="最小化" AutomationProperties.Name="最小化" shell:WindowChrome.IsHitTestVisibleInChrome="True" />

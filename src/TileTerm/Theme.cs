@@ -42,7 +42,14 @@ internal static class Theme
     public static readonly Brush GoldStar = new SolidColorBrush(Color.FromRgb(0xE0, 0xB0, 0x4A));
     public static readonly Brush Favorite = new SolidColorBrush(Color.FromRgb(0xE0, 0x60, 0x7D));
 
-    private const double Radius = 3;
+    /// <summary>Corner radius for text fields and buttons. Kept small on purpose — JetBrains
+    /// settings dialogs (the reference for this styling) use nearly square controls, and larger
+    /// radii read as "soft/chunky" next to that. List rows are fully square (no radius).</summary>
+    private const double Radius = 2;
+
+    /// <summary>Height shared by single-line fields and buttons, so a row of them lines up
+    /// and the dialog stays as dense as the JetBrains reference (~24px controls).</summary>
+    public const double ControlHeight = 24;
 
     private static readonly ControlTemplate SharedButtonTemplate = BuildButtonTemplate(BgField, BgHover, BgPressed);
     private static readonly ControlTemplate PrimaryButtonTemplate = BuildButtonTemplate(Accent, AccentHover, Accent);
@@ -68,7 +75,8 @@ internal static class Theme
         Foreground = Fg,
         BorderBrush = BorderCol,
         BorderThickness = new Thickness(1),
-        Padding = new Thickness(10, 3, 10, 3),
+        Padding = new Thickness(12, 0, 12, 0),
+        MinHeight = ControlHeight,
         FontSize = 12,
     };
 
@@ -80,7 +88,8 @@ internal static class Theme
         Background = Accent,
         Foreground = Brushes.White,
         BorderThickness = new Thickness(0),
-        Padding = new Thickness(11, 3, 11, 3),
+        Padding = new Thickness(12, 0, 12, 0),
+        MinHeight = ControlHeight,
         FontSize = 12,
     };
 
@@ -92,6 +101,7 @@ internal static class Theme
         button.Padding = new Thickness(4);
         button.BorderThickness = new Thickness(0);
         button.MinWidth = 0;
+        button.MinHeight = 0;
         return button;
     }
 
@@ -103,30 +113,101 @@ internal static class Theme
         BorderBrush = BorderCol,
         CaretBrush = Fg,
         BorderThickness = new Thickness(1),
-        Padding = new Thickness(5, 3, 5, 3),
+        Padding = new Thickness(5, 0, 5, 0),
+        VerticalContentAlignment = VerticalAlignment.Center,
+        Height = ControlHeight,
         FontSize = 12,
     };
 
     /// <summary>A ListBox styled with accent-colored selection instead of the OS's own
-    /// (which would clash with the rest of the dark theme).</summary>
+    /// (which would clash with the rest of the dark theme). Rows run edge to edge — no inset
+    /// and no rounded corners — like the JetBrains settings tree/list.</summary>
     public static ListBox ListBox() => new()
     {
         Background = BgList,
         Foreground = Fg,
         BorderBrush = BorderCol,
         BorderThickness = new Thickness(1),
-        Padding = new Thickness(2),
+        Padding = new Thickness(0),
         FontSize = 12,
         ItemContainerStyle = ListBoxItemStyle,
     };
 
-    /// <summary>Small muted caption text used above a field (name, meaning, etc.).</summary>
+    /// <summary>A dark-themed check box: a small square that fills with the accent color and
+    /// shows a check mark when checked (the stock one is a white OS-styled box).</summary>
+    public static CheckBox CheckBox(string content)
+    {
+        var template = new ControlTemplate(typeof(CheckBox));
+
+        var root = new FrameworkElementFactory(typeof(StackPanel));
+        root.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+        root.SetValue(Panel.BackgroundProperty, Brushes.Transparent);
+
+        var box = new FrameworkElementFactory(typeof(Border)) { Name = "Box" };
+        box.SetValue(FrameworkElement.WidthProperty, 14.0);
+        box.SetValue(FrameworkElement.HeightProperty, 14.0);
+        box.SetValue(Border.BackgroundProperty, BgField);
+        box.SetValue(Border.BorderBrushProperty, BorderCol);
+        box.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        box.SetValue(Border.CornerRadiusProperty, new CornerRadius(Radius));
+        box.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+
+        var check = new FrameworkElementFactory(typeof(System.Windows.Shapes.Path)) { Name = "Check" };
+        check.SetValue(System.Windows.Shapes.Path.DataProperty, Geometry.Parse("M 2.5,6.5 L 5.5,9.5 L 10.5,3.5"));
+        check.SetValue(System.Windows.Shapes.Shape.StrokeProperty, Brushes.White);
+        check.SetValue(System.Windows.Shapes.Shape.StrokeThicknessProperty, 1.6);
+        check.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
+        box.AppendChild(check);
+        root.AppendChild(box);
+
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(FrameworkElement.MarginProperty, new Thickness(6, 0, 0, 0));
+        presenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        root.AppendChild(presenter);
+
+        template.VisualTree = root;
+
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BorderBrushProperty, FgMuted, "Box"));
+        template.Triggers.Add(hover);
+
+        var isChecked = new Trigger { Property = System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, Value = true };
+        isChecked.Setters.Add(new Setter(Border.BackgroundProperty, Accent, "Box"));
+        isChecked.Setters.Add(new Setter(Border.BorderBrushProperty, Accent, "Box"));
+        isChecked.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "Check"));
+        template.Triggers.Add(isChecked);
+
+        var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
+        disabled.Setters.Add(new Setter(Control.ForegroundProperty, FgDisabled));
+        disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.6, "Box"));
+        template.Triggers.Add(disabled);
+
+        return new CheckBox
+        {
+            Content = content,
+            Template = template,
+            Foreground = Fg,
+            FontSize = 12,
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+    }
+
+    /// <summary>A form row's label, sitting to the left of its field (JetBrains layout).</summary>
     public static TextBlock Label(string text) => new()
     {
         Text = text,
+        Foreground = Fg,
+        FontSize = 12,
+        VerticalAlignment = VerticalAlignment.Center,
+        TextTrimming = TextTrimming.CharacterEllipsis,
+    };
+
+    /// <summary>Small muted explanatory text shown under a field.</summary>
+    public static TextBlock Hint(string text) => new()
+    {
+        Text = text,
         Foreground = FgMuted,
-        FontSize = 10.5,
-        Margin = new Thickness(0, 0, 0, 3),
+        FontSize = 11,
         TextWrapping = TextWrapping.Wrap,
     };
 
@@ -234,6 +315,7 @@ internal static class Theme
         // TextBox control model regardless of how the rest of the template looks.
         var host = new FrameworkElementFactory(typeof(ScrollViewer)) { Name = "PART_ContentHost" };
         host.SetValue(FrameworkElement.MarginProperty, new TemplateBindingExtension(Control.PaddingProperty));
+        host.SetValue(FrameworkElement.VerticalAlignmentProperty, new TemplateBindingExtension(Control.VerticalContentAlignmentProperty));
         border.AppendChild(host);
 
         template.VisualTree = border;
@@ -255,9 +337,9 @@ internal static class Theme
 
         var border = new FrameworkElementFactory(typeof(Border)) { Name = "Bd" };
         border.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(Radius));
-        border.SetValue(Border.PaddingProperty, new Thickness(6, 3, 6, 3));
+        border.SetValue(Border.PaddingProperty, new Thickness(8, 2, 8, 2));
         border.SetValue(FrameworkElement.MarginProperty, new Thickness(0));
+        border.SetValue(FrameworkElement.MinHeightProperty, ControlHeight - 2);
 
         var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
         border.AppendChild(presenter);

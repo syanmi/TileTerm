@@ -16,8 +16,10 @@ namespace TileTerm.Terminal;
 /// </summary>
 public sealed class TerminalCanvas : FrameworkElement
 {
-    private const double FontSize = 14.0;
-    private static readonly FontFamily Font = new("Consolas");
+    internal const double FontSize = 14.0;
+    internal static readonly FontFamily Font = new("Consolas");
+
+    private Rect _lastCursorRect;
 
     private double _cellWidth = 8;
     private double _cellHeight = 16;
@@ -29,9 +31,15 @@ public sealed class TerminalCanvas : FrameworkElement
     /// <summary>Fired after a layout size change, with the new size expressed in terminal cells.</summary>
     public event Action<int, int>? SizeInCellsChanged;
 
+    /// <summary>Fired after a render in which the cursor cell's position changed, with that
+    /// cell's rectangle in this control's coordinates (so the hosting pane can keep its IME
+    /// input box on it).</summary>
+    public event Action<Rect>? CursorMoved;
+
     public TerminalCanvas()
     {
-        Focusable = true;
+        // Keyboard focus lives in the hosting pane's IME TextBox, not here.
+        Focusable = false;
         FocusVisualStyle = null;
         ClipToBounds = true;
         SnapsToDevicePixels = true;
@@ -118,6 +126,13 @@ public sealed class TerminalCanvas : FrameworkElement
                     dc.DrawText(formatted, new Point(x, y));
                 }
             }
+        }
+
+        var cursorRect = new Rect(buffer.X * _cellWidth, buffer.Y * _cellHeight, _cellWidth, _cellHeight);
+        if (cursorRect != _lastCursorRect)
+        {
+            _lastCursorRect = cursorRect;
+            CursorMoved?.Invoke(cursorRect);
         }
 
         if (terminal.CursorVisible)

@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Input;
 using TileTerm.Terminal;
 
 namespace TileTerm;
@@ -16,15 +17,17 @@ namespace TileTerm;
 /// them as お気に入り (favorites). Backed by <see cref="ProfileStore"/>, which
 /// persists to <c>%AppData%\TileTerm\profiles.json</c>.
 ///
-/// Laid out like a typical IDE settings dialog (VSCode/JetBrains): category
-/// tree | list-with-toolbar | editor form, with draggable splitters between
-/// each (not fixed dividers — a static-width sidebar next to a resizable
-/// editor form reads as un-idiomatic for this kind of dialog), and a fixed
-/// action bar pinned to the bottom of the whole window rather than a Save
-/// button buried mid-form.
+/// Modeled on the JetBrains (CLion) settings dialog: a flush category list |
+/// list-with-toolbar | form, with draggable splitters between them; form rows put
+/// the label to the left of a compact (24px, nearly square) field with any
+/// explanation as small muted text underneath; and a bottom bar with
+/// OK / キャンセル / 適用 — 適用 (apply) is only enabled while the form has unsaved
+/// edits, OK applies them and closes, キャンセル just closes.
 /// </summary>
 public sealed class SettingsWindow : Window
 {
+    private const double LabelColumnWidth = 112;
+
     private readonly ProfileStore _store;
     private readonly ListBox _list = Theme.ListBox();
     private readonly TextBox _nameBox = Theme.TextBox();
@@ -33,20 +36,25 @@ public sealed class SettingsWindow : Window
     private readonly TextBox _argsBox = Theme.TextBox();
     private readonly TextBox _cwdBox = Theme.TextBox();
     private readonly Button _defaultButton = Theme.Button("既定のプロンプトにする");
-    private readonly CheckBox _favoriteCheck = new()
+    private readonly Button _applyButton = Theme.Button("適用");
+    private readonly CheckBox _favoriteCheck = Theme.CheckBox("お気に入りに登録").Also(c =>
     {
-        Content = "お気に入りに登録", Foreground = Theme.Fg, VerticalAlignment = VerticalAlignment.Center,
-        ToolTip = "タイトルバーにこのプロンプトのボタンが表示されます",
-    };
+        c.VerticalAlignment = VerticalAlignment.Center;
+        c.Margin = new Thickness(14, 0, 0, 0);
+        c.ToolTip = "タイトルバーにこのプロンプトのボタンが表示されます";
+    });
     private ProfileDefinition? _editing;
     private bool _suppressToggleEvents;
+    private (string, string, string, string, string) _loadedFields;
 
     public SettingsWindow(ProfileStore store)
     {
         _store = store;
         Title = "TileTerm - 設定";
-        Width = 740;
-        Height = 440;
+        Width = 920;
+        Height = 640;
+        MinWidth = 700;
+        MinHeight = 460;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Theme.Apply(this);
 
@@ -63,21 +71,35 @@ public sealed class SettingsWindow : Window
         outer.Children.Add(actionBar);
 
         Content = outer;
+
+        foreach (var box in new[] { _nameBox, _iconBox, _exeBox, _argsBox, _cwdBox })
+            box.TextChanged += (_, _) => UpdateApplyState();
+
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape) { e.Handled = true; Close(); }
+        };
+
         Refresh();
+
+        // Open with something selected (the default prompt), like the JetBrains dialog opens
+        // with its first entry selected, rather than an empty form.
+        if ((_store.GetDefaultProfile() ?? _store.Profiles.FirstOrDefault()) is { } initial)
+            SelectRowFor(initial);
     }
 
     private Grid BuildMainArea()
     {
-        var main = new Grid { Margin = new Thickness(0) };
-        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160), MinWidth = 110 });
+        var main = new Grid();
+        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210), MinWidth = 130 });
         main.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 300 });
+        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 380 });
 
         // Category sidebar — just one category today; structured so more can be added later.
+        // Rows run flush edge to edge, like the JetBrains settings tree.
         var categoryList = Theme.ListBox();
         categoryList.BorderThickness = new Thickness(0);
-        categoryList.Background = Theme.BgWindow;
-        categoryList.Margin = new Thickness(6);
+        categoryList.Background = Theme.BgList;
         categoryList.Items.Add("プロンプト");
         categoryList.SelectedIndex = 0;
         Grid.SetColumn(categoryList, 0);
@@ -89,23 +111,18 @@ public sealed class SettingsWindow : Window
 
         var rightSide = new Grid();
         rightSide.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        rightSide.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         rightSide.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
         var header = new TextBlock
         {
             Text = "プロンプト", Foreground = Theme.Fg, FontSize = 13, FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(14, 10, 14, 8),
+            Margin = new Thickness(16, 12, 16, 10),
         };
         Grid.SetRow(header, 0);
         rightSide.Children.Add(header);
 
-        var hDivider = Theme.Divider(vertical: false);
-        Grid.SetRow(hDivider, 1);
-        rightSide.Children.Add(hDivider);
-
         var body = BuildBody();
-        Grid.SetRow(body, 2);
+        Grid.SetRow(body, 1);
         rightSide.Children.Add(body);
 
         Grid.SetColumn(rightSide, 2);
@@ -116,10 +133,10 @@ public sealed class SettingsWindow : Window
 
     private Grid BuildBody()
     {
-        var body = new Grid { Margin = new Thickness(14, 10, 14, 10) };
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220), MinWidth = 140 });
+        var body = new Grid { Margin = new Thickness(16, 0, 16, 14) };
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(200), MinWidth = 140 });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 220 });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 260 });
 
         // Profile list, with a small +/- toolbar above it.
         var listPanel = new DockPanel();
@@ -202,24 +219,26 @@ public sealed class SettingsWindow : Window
         return new DataTemplate { VisualTree = dock };
     }
 
+    /// <summary>The editor: each field on its own row with the label to its left and an
+    /// optional small muted hint underneath (JetBrains-style), then the 既定/お気に入り controls.</summary>
     private ScrollViewer BuildForm()
     {
-        var form = new StackPanel();
-        form.Children.Add(LabeledBox("名前", _nameBox));
-        form.Children.Add(LabeledBox("表示アイコン（絵文字や \"PS\" のような短い文字列。空欄なら名前の頭文字）", _iconBox));
-        form.Children.Add(LabeledBoxWithBrowse("実行ファイル (.exe / .cmd / .bat)", _exeBox));
-        form.Children.Add(LabeledBox("引数（スペース区切り。空白を含む場合は \"...\" で囲む）", _argsBox));
-        form.Children.Add(LabeledBox("作業ディレクトリ（空欄ならユーザーフォルダ）", _cwdBox));
+        var form = new Grid { Margin = new Thickness(14, 0, 0, 0) };
+        form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(LabelColumnWidth) });
+        form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        form.Children.Add(Theme.Divider(vertical: false).Also(d => d.Margin = new Thickness(0, 6, 0, 10)));
+        AddFormRow(form, "名前", _nameBox, null);
+        AddFormRow(form, "表示アイコン", _iconBox, "絵文字や \"PS\" のような短い文字列。空欄なら名前の頭文字");
+        AddFormRow(form, "実行ファイル", WithBrowseButton(_exeBox), ".exe / .cmd / .bat");
+        AddFormRow(form, "引数", _argsBox, "スペース区切り。空白を含む場合は \"...\" で囲む");
+        AddFormRow(form, "作業ディレクトリ", _cwdBox, "空欄ならユーザーフォルダ");
 
-        var optionsRow = new StackPanel { Orientation = Orientation.Horizontal };
+        var optionsRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
         optionsRow.Children.Add(_defaultButton);
-        _favoriteCheck.Margin = new Thickness(12, 0, 0, 0);
         _favoriteCheck.Checked += (_, _) => OnFavoriteToggled(true);
         _favoriteCheck.Unchecked += (_, _) => OnFavoriteToggled(false);
         optionsRow.Children.Add(_favoriteCheck);
-        form.Children.Add(optionsRow);
+        AddFormRow(form, "", optionsRow, null);
 
         _defaultButton.Click += (_, _) =>
         {
@@ -229,53 +248,85 @@ public sealed class SettingsWindow : Window
         return new ScrollViewer { Content = form, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, 4, 0) };
     }
 
+    private static void AddFormRow(Grid form, string label, UIElement field, string? hint)
+    {
+        int row = form.RowDefinitions.Count;
+        form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var labelBlock = Theme.Label(label);
+        labelBlock.Height = Theme.ControlHeight;
+        labelBlock.VerticalAlignment = VerticalAlignment.Top;
+        labelBlock.Padding = new Thickness(0, 4, 0, 0);
+        Grid.SetRow(labelBlock, row);
+        Grid.SetColumn(labelBlock, 0);
+        form.Children.Add(labelBlock);
+
+        var cell = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+        cell.Children.Add(field);
+        if (hint is not null)
+        {
+            var hintBlock = Theme.Hint(hint);
+            hintBlock.Margin = new Thickness(1, 3, 0, 0);
+            cell.Children.Add(hintBlock);
+        }
+        Grid.SetRow(cell, row);
+        Grid.SetColumn(cell, 1);
+        form.Children.Add(cell);
+    }
+
+    /// <summary>The field followed by a small folder button that opens a file picker — the
+    /// JetBrains way of offering "browse" without a wide text button.</summary>
+    private UIElement WithBrowseButton(TextBox box)
+    {
+        var browseButton = Theme.Button(Icons.Folder());
+        browseButton.Padding = new Thickness(0);
+        browseButton.Width = 30;
+        browseButton.Margin = new Thickness(4, 0, 0, 0);
+        browseButton.ToolTip = "参照...";
+        AutomationProperties.SetName(browseButton, "参照...");
+        browseButton.Click += (_, _) => BrowseExe(box);
+
+        var row = new DockPanel();
+        DockPanel.SetDock(browseButton, Dock.Right);
+        row.Children.Add(browseButton);
+        row.Children.Add(box);
+        return row;
+    }
+
     private Border BuildActionBar()
     {
         var bar = new Border
         {
             BorderBrush = Theme.BorderCol,
             BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding = new Thickness(14, 8, 14, 8),
+            Padding = new Thickness(16, 10, 16, 10),
         };
 
         var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
 
-        var closeButton = Theme.Button("閉じる");
-        closeButton.Click += (_, _) => Close();
-        panel.Children.Add(closeButton);
+        var okButton = Theme.PrimaryButton("OK");
+        okButton.MinWidth = 76;
+        okButton.IsDefault = true;
+        okButton.Click += (_, _) =>
+        {
+            if (_applyButton.IsEnabled) ApplyEdits();
+            Close();
+        };
+        panel.Children.Add(okButton);
 
-        var saveButton = Theme.PrimaryButton("保存");
-        saveButton.Margin = new Thickness(8, 0, 0, 0);
-        saveButton.Click += OnSave;
-        panel.Children.Add(saveButton);
+        var cancelButton = Theme.Button("キャンセル");
+        cancelButton.MinWidth = 76;
+        cancelButton.Margin = new Thickness(8, 0, 0, 0);
+        cancelButton.Click += (_, _) => Close();
+        panel.Children.Add(cancelButton);
+
+        _applyButton.MinWidth = 76;
+        _applyButton.Margin = new Thickness(8, 0, 0, 0);
+        _applyButton.Click += (_, _) => ApplyEdits();
+        panel.Children.Add(_applyButton);
 
         bar.Child = panel;
         return bar;
-    }
-
-    private static UIElement LabeledBox(string label, TextBox box)
-    {
-        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
-        panel.Children.Add(Theme.Label(label));
-        panel.Children.Add(box);
-        return panel;
-    }
-
-    private UIElement LabeledBoxWithBrowse(string label, TextBox box)
-    {
-        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
-        panel.Children.Add(Theme.Label(label));
-
-        var row = new DockPanel();
-        var browseButton = Theme.Button("参照...");
-        browseButton.Margin = new Thickness(6, 0, 0, 0);
-        browseButton.Click += (_, _) => BrowseExe(box);
-        DockPanel.SetDock(browseButton, Dock.Right);
-        row.Children.Add(browseButton);
-        row.Children.Add(box);
-
-        panel.Children.Add(row);
-        return panel;
     }
 
     private void BrowseExe(TextBox target)
@@ -305,6 +356,13 @@ public sealed class SettingsWindow : Window
         Refresh();
     }
 
+    private (string, string, string, string, string) CurrentFields() =>
+        (_nameBox.Text, _iconBox.Text, _exeBox.Text, _argsBox.Text, _cwdBox.Text);
+
+    /// <summary>適用 is only meaningful while the form differs from what was loaded into it.</summary>
+    private void UpdateApplyState() =>
+        _applyButton.IsEnabled = _editing is not null && CurrentFields() != _loadedFields;
+
     private void LoadSelected()
     {
         _editing = (_list.SelectedItem as ProfileRow)?.Profile;
@@ -321,6 +379,9 @@ public sealed class SettingsWindow : Window
         _favoriteCheck.IsEnabled = hasSelection;
         _favoriteCheck.IsChecked = hasSelection && _store.IsFavorite(_editing!);
         _suppressToggleEvents = false;
+
+        _loadedFields = CurrentFields();
+        UpdateApplyState();
     }
 
     private void OnFavoriteToggled(bool isFavorite)
@@ -330,13 +391,9 @@ public sealed class SettingsWindow : Window
         Refresh();
     }
 
-    private void OnSave(object sender, RoutedEventArgs e)
+    private void ApplyEdits()
     {
-        if (_editing is null)
-        {
-            MessageDialog.Show(this, "編集するプロンプトをリストから選択するか、「追加」してください。", "TileTerm");
-            return;
-        }
+        if (_editing is null) return;
 
         _editing.Name = string.IsNullOrWhiteSpace(_nameBox.Text) ? "(名称未設定)" : _nameBox.Text.Trim();
         _editing.Icon = _iconBox.Text.Trim();

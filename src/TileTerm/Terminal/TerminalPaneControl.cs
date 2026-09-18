@@ -44,7 +44,9 @@ public sealed class TerminalPaneControl : Grid
     private readonly TextBlock _titleText;
     private readonly Border _activeBorder;
     private readonly Border _dropZoneOverlay;
+    private readonly TextBox _imeBox;
     private Point? _dragStartPoint;
+    private bool _composing;
 
     public Guid PaneId { get; } = Guid.NewGuid();
     public TerminalSession? Session { get; private set; }
@@ -89,8 +91,18 @@ public sealed class TerminalPaneControl : Grid
         Grid.SetRow(header, 0);
         content.Children.Add(header);
 
-        Grid.SetRow(_canvas, 1);
-        content.Children.Add(_canvas);
+        // The canvas only draws; keyboard focus (and with it the IME) lives in a transparent
+        // TextBox stacked on top of it at the terminal cursor. A plain FrameworkElement can
+        // technically receive IME-committed text, but it has no way to show the in-progress
+        // composition or to tell the IME where the candidate window belongs — so typing
+        // Japanese showed nothing until confirmed, with the candidates floating far away.
+        // A real TextBox gets both (inline composition, candidate window at its caret) for free.
+        _imeBox = BuildImeBox();
+        var terminalArea = new Grid();
+        terminalArea.Children.Add(_canvas);
+        terminalArea.Children.Add(_imeBox);
+        Grid.SetRow(terminalArea, 1);
+        content.Children.Add(terminalArea);
 
         SetRow(content, 0);
         SetRowSpan(content, 2);
@@ -117,11 +129,16 @@ public sealed class TerminalPaneControl : Grid
         SetRowSpan(_dropZoneOverlay, 2);
         Children.Add(_dropZoneOverlay);
 
-        _canvas.PreviewTextInput += OnPreviewTextInput;
-        _canvas.PreviewKeyDown += OnPreviewKeyDown;
+        _imeBox.PreviewTextInput += OnPreviewTextInput;
+        _imeBox.PreviewKeyDown += OnPreviewKeyDown;
+        _imeBox.GotKeyboardFocus += (_, _) => Activated?.Invoke();
+        TextCompositionManager.AddPreviewTextInputStartHandler(_imeBox, (_, _) => _composing = true);
+        TextCompositionManager.AddPreviewTextInputUpdateHandler(_imeBox, (_, _) => _composing = true);
+        _imeBox.TextChanged += OnImeBoxTextChanged;
+
         _canvas.SizeInCellsChanged += (cols, rows) => Session?.Resize(cols, rows);
-        _canvas.GotKeyboardFocus += (_, _) => Activated?.Invoke();
-        _canvas.PreviewMouseDown += (_, _) => _canvas.Focus();
+        _canvas.CursorMoved += rect => Dispatcher.BeginInvoke(() => PlaceImeBox(rect));
+        _canvas.PreviewMouseDown += (_, _) => _imeBox.Focus();
 
         AllowDrop = true;
         DragOver += OnDragOver;
@@ -129,6 +146,56 @@ public sealed class TerminalPaneControl : Grid
         Drop += OnDrop;
 
         Loaded += OnLoaded;
+    }
+
+    private static TextBox BuildImeBox()
+    {
+        var box = new TextBox
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            MinWidth = 2,
+            MinHeight = 0,
+            Padding = new Thickness(0),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            BorderBrush = Brushes.Transparent,
+            Background = Brushes.Transparent,
+            Foreground = Brushes.Transparent,
+            CaretBrush = Brushes.Transparent,
+            SelectionBrush = Brushes.Transparent,
+            FontFamily = TerminalCanvas.Font,
+            FontSize = TerminalCanvas.FontSize,
+            IsUndoEnabled = false,
+            AllowDrop = false,
+            IsHitTestVisible = false,
+            ContextMenu = null,
+        };
+        InputMethod.SetIsInputMethodEnabled(box, true);
+        return box;
+    }
+
+    /// <summary>Keeps the IME box sitting exactly on the terminal cursor cell, so the IME
+    /// anchors its candidate window there.</summary>
+    private void PlaceImeBox(Rect cursorRect)
+    {
+        _imeBox.Margin = new Thickness(cursorRect.X, cursorRect.Y, 0, 0);
+        _imeBox.Height = cursorRect.Height;
+    }
+
+    /// <summary>The box only exists to host IME composition; while a composition is in
+    /// progress it's shown (opaque, over the terminal text) so the user sees what they're
+    /// typing, and once the text is committed — already sent to the terminal by
+    /// <see cref="OnPreviewTextInput"/>, which TextBox still keeps a copy of — it's emptied.</summary>
+    private void OnImeBoxTextChanged(object sender, TextChangedEventArgs e)
+    {
+        bool hasText = _imeBox.Text.Length > 0;
+        if (!hasText) _composing = false; // composition cancelled (e.g. Esc) or emptied
+        _imeBox.Foreground = hasText ? Brushes.Gainsboro : Brushes.Transparent;
+        _imeBox.Background = hasText ? Brushes.Black : Brushes.Transparent;
+        _imeBox.BorderBrush = hasText ? Brushes.Gainsboro : Brushes.Transparent;
+
+        if (hasText && !_composing)
+            Dispatcher.BeginInvoke(() => { if (!_composing) _imeBox.Clear(); });
     }
 
     private FrameworkElement BuildHeader()
@@ -161,9 +228,10 @@ public sealed class TerminalPaneControl : Grid
         panel.PreviewMouseLeftButtonDown += (_, _) =>
         {
             _dragStartPoint = Mouse.GetPosition(null);
-            _canvas.Focus();
+            _imeBox.Focus();
         };
         panel.PreviewMouseMove += OnHeaderPreviewMouseMove;
+        panel.GiveFeedback += OnHeaderGiveFeedback;
 
         return panel;
     }
@@ -178,12 +246,20 @@ public sealed class TerminalPaneControl : Grid
             return;
 
         _dragStartPoint = null;
-        // Deliberately not customizing the drag cursor (no GiveFeedback handler) — the
-        // grab-hand cursor is for "you can pick this up" (hover, still not dragging), and
-        // VSCode's own tile drag doesn't keep a grab cursor once the drag is underway either.
-        // WPF's default drag cursors (arrow, "forbidden" circle-slash over invalid targets)
-        // apply here instead.
         DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(DragFormat, PaneId), DragDropEffects.Move);
+    }
+
+    /// <summary>The grab-hand cursor is only for hovering (something you <em>can</em> pick up);
+    /// once dragging it goes back to a normal arrow, and — unlike WPF's default — never turns
+    /// into a "forbidden" circle-slash over places a tile can't be dropped: that read as an
+    /// error, and VSCode's own tile dragging doesn't show one either.</summary>
+    private static void OnHeaderGiveFeedback(object sender, GiveFeedbackEventArgs e)
+    {
+        if (e.Effects != DragDropEffects.None) return;
+
+        e.UseDefaultCursors = false;
+        Mouse.SetCursor(Cursors.Arrow);
+        e.Handled = true;
     }
 
     private void OnDragOver(object sender, DragEventArgs e)
@@ -291,7 +367,7 @@ public sealed class TerminalPaneControl : Grid
             _titleText.Text = $"{Profile.DisplayIcon()}  {Profile.Name} (終了 code={code})");
 
         _titleText.Text = $"{Profile.DisplayIcon()}  {Profile.Name}";
-        _canvas.Focus();
+        _imeBox.Focus();
 
         try
         {
@@ -317,7 +393,7 @@ public sealed class TerminalPaneControl : Grid
     public void SetActive(bool active) =>
         _activeBorder.BorderBrush = active ? Brushes.DodgerBlue : Brushes.Transparent;
 
-    public void FocusCanvas() => _canvas.Focus();
+    public void FocusCanvas() => _imeBox.Focus();
 
     /// <summary>Tears down the backing session. Call once when this pane is removed from the tree.</summary>
     public void Shutdown() => Session?.Dispose();
@@ -332,7 +408,13 @@ public sealed class TerminalPaneControl : Grid
             sb.Append(terminal.GenerateCharInput(c, XTerm.Input.KeyModifiers.None));
 
         Send(sb.ToString());
+        _composing = false;
         e.Handled = true;
+
+        // TextBox still keeps its own copy of a committed IME composition even though this
+        // handler consumed the event; TextChanged fires *before* this (while _composing is
+        // still true), so the emptying has to happen here.
+        Dispatcher.BeginInvoke(() => { if (!_composing) _imeBox.Clear(); });
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)

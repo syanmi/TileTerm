@@ -81,6 +81,20 @@ internal static class Icons
         return canvas;
     }
 
+    /// <summary>Outline folder (file-browse buttons) — a tab plus a body, stroked only.</summary>
+    public static UIElement Folder(double size = 14)
+    {
+        var w = size;
+        var h = size * 0.78;
+        var geometry = Geometry.Parse(FormattableString.Invariant(
+            $"M 0.5,{h * 0.2:0.##} L 0.5,{h - 0.5:0.##} L {w - 0.5:0.##},{h - 0.5:0.##} L {w - 0.5:0.##},{h * 0.3:0.##} L {w * 0.45:0.##},{h * 0.3:0.##} L {w * 0.35:0.##},0.5 L 0.5,0.5 Z"));
+        return new Path
+        {
+            Data = geometry, Stroke = Ink, StrokeThickness = 1.1, StrokeLineJoin = PenLineJoin.Round,
+            Width = w, Height = h, Fill = Brushes.Transparent,
+        };
+    }
+
     public static UIElement Minus(double size = 14, double thickness = 1.4)
     {
         var canvas = new Canvas { Width = size, Height = size };
