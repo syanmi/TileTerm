@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 
 namespace TileTerm;
@@ -34,6 +35,12 @@ internal static class Theme
     public static readonly Brush FgDisabled = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x77));
     public static readonly Brush Accent = new SolidColorBrush(Color.FromRgb(0x3A, 0x9B, 0xF5));
     public static readonly Brush AccentHover = new SolidColorBrush(Color.FromRgb(0x5B, 0xAC, 0xF7));
+
+    /// <summary>Colors for the "既定/お気に入り" status glyphs in a profile list row.
+    /// Deliberately not <see cref="Accent"/> — a gold star on an Accent-colored selected
+    /// row would be nearly invisible; gold/pink both stay legible on either background.</summary>
+    public static readonly Brush GoldStar = new SolidColorBrush(Color.FromRgb(0xE0, 0xB0, 0x4A));
+    public static readonly Brush Favorite = new SolidColorBrush(Color.FromRgb(0xE0, 0x60, 0x7D));
 
     private const double Radius = 3;
 
@@ -123,8 +130,51 @@ internal static class Theme
         TextWrapping = TextWrapping.Wrap,
     };
 
-    /// <summary>A 1px low-contrast divider line — vertical if <paramref name="vertical"/>,
-    /// horizontal otherwise.</summary>
+    /// <summary>
+    /// A draggable, resizable divider between two Grid columns/rows — a wide
+    /// transparent hit-test strip with a 1px line centered inside it, so it reads
+    /// as a thin, unobtrusive divider rather than one solid thick bar, while
+    /// staying easy to grab. Used both between panes (<c>PaneManager</c>) and
+    /// between the panels of a settings-style dialog.
+    /// </summary>
+    public static GridSplitter Splitter(bool vertical)
+    {
+        var splitter = new GridSplitter
+        {
+            Width = vertical ? 5 : double.NaN,
+            Height = vertical ? double.NaN : 5,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Background = Brushes.Transparent,
+            ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+            Cursor = vertical ? Cursors.SizeWE : Cursors.SizeNS,
+            UseLayoutRounding = true,
+            SnapsToDevicePixels = true,
+        };
+
+        var line = new FrameworkElementFactory(typeof(Border));
+        line.SetValue(Border.BackgroundProperty, BorderCol);
+        line.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
+        if (vertical)
+        {
+            line.SetValue(FrameworkElement.WidthProperty, 1.0);
+            line.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            line.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Stretch);
+        }
+        else
+        {
+            line.SetValue(FrameworkElement.HeightProperty, 1.0);
+            line.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            line.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+        }
+
+        splitter.Template = new ControlTemplate(typeof(GridSplitter)) { VisualTree = line };
+        return splitter;
+    }
+
+    /// <summary>A fixed (non-draggable) 1px low-contrast divider line — vertical if
+    /// <paramref name="vertical"/>, horizontal otherwise. Use <see cref="Splitter"/>
+    /// instead when the two sides should be resizable.</summary>
     public static Border Divider(bool vertical) => new()
     {
         Background = BorderCol,

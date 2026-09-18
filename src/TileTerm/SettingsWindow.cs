@@ -1,6 +1,9 @@
+using System.Globalization;
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Data;
 using TileTerm.Terminal;
 
 namespace TileTerm;
@@ -14,8 +17,11 @@ namespace TileTerm;
 /// persists to <c>%AppData%\TileTerm\profiles.json</c>.
 ///
 /// Laid out like a typical IDE settings dialog (VSCode/JetBrains): category
-/// tree | list-with-toolbar | editor form, and a fixed action bar pinned to
-/// the bottom of the whole window rather than a Save button buried mid-form.
+/// tree | list-with-toolbar | editor form, with draggable splitters between
+/// each (not fixed dividers — a static-width sidebar next to a resizable
+/// editor form reads as un-idiomatic for this kind of dialog), and a fixed
+/// action bar pinned to the bottom of the whole window rather than a Save
+/// button buried mid-form.
 /// </summary>
 public sealed class SettingsWindow : Window
 {
@@ -63,9 +69,9 @@ public sealed class SettingsWindow : Window
     private Grid BuildMainArea()
     {
         var main = new Grid { Margin = new Thickness(0) };
-        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
+        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160), MinWidth = 110 });
         main.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        main.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 300 });
 
         // Category sidebar — just one category today; structured so more can be added later.
         var categoryList = Theme.ListBox();
@@ -77,9 +83,9 @@ public sealed class SettingsWindow : Window
         Grid.SetColumn(categoryList, 0);
         main.Children.Add(categoryList);
 
-        var vDivider1 = Theme.Divider(vertical: true);
-        Grid.SetColumn(vDivider1, 1);
-        main.Children.Add(vDivider1);
+        var splitter1 = Theme.Splitter(vertical: true);
+        Grid.SetColumn(splitter1, 1);
+        main.Children.Add(splitter1);
 
         var rightSide = new Grid();
         rightSide.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -111,9 +117,9 @@ public sealed class SettingsWindow : Window
     private Grid BuildBody()
     {
         var body = new Grid { Margin = new Thickness(14, 10, 14, 10) };
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220), MinWidth = 140 });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 220 });
 
         // Profile list, with a small +/- toolbar above it.
         var listPanel = new DockPanel();
@@ -121,20 +127,24 @@ public sealed class SettingsWindow : Window
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
         var addButton = Theme.IconButton(Icons.Plus());
         addButton.ToolTip = "プロンプトを追加";
+        AutomationProperties.SetName(addButton, "プロンプトを追加");
         var removeButton = Theme.IconButton(Icons.Minus());
         removeButton.ToolTip = "選択したプロンプトを削除";
+        AutomationProperties.SetName(removeButton, "選択したプロンプトを削除");
         toolbar.Children.Add(addButton);
         toolbar.Children.Add(removeButton);
         DockPanel.SetDock(toolbar, Dock.Top);
         listPanel.Children.Add(toolbar);
+
+        _list.ItemTemplate = BuildProfileRowTemplate();
         listPanel.Children.Add(_list);
 
         Grid.SetColumn(listPanel, 0);
         body.Children.Add(listPanel);
 
-        var vDivider2 = Theme.Divider(vertical: true);
-        Grid.SetColumn(vDivider2, 1);
-        body.Children.Add(vDivider2);
+        var splitter2 = Theme.Splitter(vertical: true);
+        Grid.SetColumn(splitter2, 1);
+        body.Children.Add(splitter2);
 
         var form = BuildForm();
         Grid.SetColumn(form, 2);
@@ -145,6 +155,51 @@ public sealed class SettingsWindow : Window
         _list.SelectionChanged += (_, _) => LoadSelected();
 
         return body;
+    }
+
+    /// <summary>
+    /// One row: profile name left-aligned (filling remaining space, ellipsized if long),
+    /// with the 既定/お気に入り status shown as right-aligned glyphs — an outline glyph
+    /// when off, a filled one when on (☆→★, ♡→♥), rather than mixing in a letter marker.
+    /// </summary>
+    private static DataTemplate BuildProfileRowTemplate()
+    {
+        var starGlyph = new BoolToValueConverter { WhenTrue = "★", WhenFalse = "☆" };
+        var starBrush = new BoolToValueConverter { WhenTrue = Theme.GoldStar, WhenFalse = Theme.FgMuted };
+        var heartGlyph = new BoolToValueConverter { WhenTrue = "♥", WhenFalse = "♡" };
+        var heartBrush = new BoolToValueConverter { WhenTrue = Theme.Favorite, WhenFalse = Theme.FgMuted };
+
+        var dock = new FrameworkElementFactory(typeof(DockPanel));
+        dock.SetValue(DockPanel.LastChildFillProperty, true);
+
+        var rightPanel = new FrameworkElementFactory(typeof(StackPanel));
+        rightPanel.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+        rightPanel.SetValue(DockPanel.DockProperty, Dock.Right);
+        rightPanel.SetValue(FrameworkElement.MarginProperty, new Thickness(8, 0, 0, 0));
+
+        var starText = new FrameworkElementFactory(typeof(TextBlock));
+        starText.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 6, 0));
+        starText.SetValue(TextBlock.FontSizeProperty, 12.0);
+        starText.SetValue(FrameworkElement.ToolTipProperty, "既定のプロンプト");
+        starText.SetBinding(TextBlock.TextProperty, new Binding(nameof(ProfileRow.IsDefault)) { Converter = starGlyph });
+        starText.SetBinding(TextBlock.ForegroundProperty, new Binding(nameof(ProfileRow.IsDefault)) { Converter = starBrush });
+        rightPanel.AppendChild(starText);
+
+        var heartText = new FrameworkElementFactory(typeof(TextBlock));
+        heartText.SetValue(TextBlock.FontSizeProperty, 12.0);
+        heartText.SetValue(FrameworkElement.ToolTipProperty, "お気に入り");
+        heartText.SetBinding(TextBlock.TextProperty, new Binding(nameof(ProfileRow.IsFavorite)) { Converter = heartGlyph });
+        heartText.SetBinding(TextBlock.ForegroundProperty, new Binding(nameof(ProfileRow.IsFavorite)) { Converter = heartBrush });
+        rightPanel.AppendChild(heartText);
+
+        dock.AppendChild(rightPanel);
+
+        var nameText = new FrameworkElementFactory(typeof(TextBlock));
+        nameText.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+        nameText.SetBinding(TextBlock.TextProperty, new Binding(nameof(ProfileRow.IconAndName)));
+        dock.AppendChild(nameText);
+
+        return new DataTemplate { VisualTree = dock };
     }
 
     private ScrollViewer BuildForm()
@@ -302,7 +357,8 @@ public sealed class SettingsWindow : Window
     private void Refresh()
     {
         var selected = _editing;
-        var rows = _store.Profiles.Select(p => new ProfileRow(p, FormatRow(p))).ToList();
+        var rows = _store.Profiles.Select(p => new ProfileRow(
+            p, $"{p.DisplayIcon()}  {p.Name}", p.Id == _store.DefaultProfileId, _store.IsFavorite(p))).ToList();
         _list.ItemsSource = rows;
 
         if (selected is not null)
@@ -311,16 +367,36 @@ public sealed class SettingsWindow : Window
         LoadSelected();
     }
 
-    private string FormatRow(ProfileDefinition p)
+    private sealed record ProfileRow(ProfileDefinition Profile, string IconAndName, bool IsDefault, bool IsFavorite)
     {
-        string star = p.Id == _store.DefaultProfileId ? "⭐" : "  ";
-        string heart = _store.IsFavorite(p) ? " ♥" : "";
-        return $"{star} {p.DisplayIcon()}  {p.Name}{heart}";
+        // WPF exposes a ListBoxItem's UI Automation Name via the bound object's
+        // ToString() unless told otherwise — without this override it falls back
+        // to the record's verbose auto-generated dump.
+        public override string ToString()
+        {
+            var suffix = (IsDefault, IsFavorite) switch
+            {
+                (true, true) => "（既定・お気に入り）",
+                (true, false) => "（既定）",
+                (false, true) => "（お気に入り）",
+                _ => "",
+            };
+            return IconAndName + suffix;
+        }
     }
 
-    private sealed record ProfileRow(ProfileDefinition Profile, string Display)
+    /// <summary>Picks one of two fixed values based on a bound bool — used to turn
+    /// IsDefault/IsFavorite into their outline/filled glyph and color.</summary>
+    private sealed class BoolToValueConverter : IValueConverter
     {
-        public override string ToString() => Display;
+        public object? WhenTrue { get; init; }
+        public object? WhenFalse { get; init; }
+
+        public object? Convert(object value, System.Type targetType, object parameter, CultureInfo culture) =>
+            value is true ? WhenTrue : WhenFalse;
+
+        public object ConvertBack(object value, System.Type targetType, object parameter, CultureInfo culture) =>
+            throw new System.NotSupportedException();
     }
 }
 

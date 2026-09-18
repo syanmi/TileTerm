@@ -15,9 +15,18 @@ namespace TileTerm.Terminal;
 /// that backs it. This is the leaf-level building block <see cref="PaneManager"/>
 /// arranges into a splittable grid. Splitting itself is driven from the main
 /// window's own title bar (see <see cref="MainWindow"/>), not from here.
+///
+/// The title bar also doubles as a VSCode-style drag handle: dragging it over
+/// another pane and dropping near an edge docks this pane there, and dropping
+/// in the middle swaps the two panes' positions (see <see cref="DockRequested"/>
+/// and <see cref="PaneManager"/>, which owns the actual tree surgery).
 /// </summary>
 public sealed class TerminalPaneControl : Grid
 {
+    /// <summary>Identifies this pane during a drag — carried in the <see cref="DataObject"/>
+    /// since a WPF drag payload can't be a live object reference across the operation.</summary>
+    public const string DragFormat = "TileTerm.PaneId";
+
     /// <summary>Thickness of the active-pane highlight border itself. 1px read as too faint
     /// to notice, so this is deliberately a bit heavier.</summary>
     private const double ActiveBorderThickness = 2;
@@ -27,18 +36,30 @@ public sealed class TerminalPaneControl : Grid
     /// little extra breathing room, so text doesn't start on the pixel right next to the line.</summary>
     private const double ContentInset = ActiveBorderThickness + 2;
 
+    /// <summary>Outer edge fraction of the pane that counts as a docking zone rather than
+    /// the center (swap) zone — see <see cref="ComputeDropZone"/>.</summary>
+    private const double EdgeZoneFraction = 0.28;
+
     private readonly TerminalCanvas _canvas = new();
     private readonly TextBlock _titleText;
     private readonly Border _activeBorder;
+    private readonly Border _dropZoneOverlay;
+    private Point? _dragStartPoint;
 
+    public Guid PaneId { get; } = Guid.NewGuid();
     public TerminalSession? Session { get; private set; }
     public ProfileDefinition Profile { get; }
 
-    /// <summary>Raised when this pane's terminal receives keyboard focus.</summary>
+    /// <summary>Raised when this pane's terminal receives keyboard focus, or its title bar
+    /// is clicked.</summary>
     public event Action? Activated;
 
     /// <summary>Raised when the user clicks the close ("×") button.</summary>
     public event Action? CloseRequested;
+
+    /// <summary>Raised when another pane is dropped onto this one — carries the dragged
+    /// pane's <see cref="PaneId"/> and where it was released.</summary>
+    public event Action<Guid, DropZone>? DockRequested;
 
     public TerminalPaneControl(ProfileDefinition profile)
     {
@@ -86,11 +107,26 @@ public sealed class TerminalPaneControl : Grid
         SetRowSpan(_activeBorder, 2);
         Children.Add(_activeBorder);
 
+        _dropZoneOverlay = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(90, 0x3A, 0x9B, 0xF5)),
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+        };
+        SetRow(_dropZoneOverlay, 0);
+        SetRowSpan(_dropZoneOverlay, 2);
+        Children.Add(_dropZoneOverlay);
+
         _canvas.PreviewTextInput += OnPreviewTextInput;
         _canvas.PreviewKeyDown += OnPreviewKeyDown;
         _canvas.SizeInCellsChanged += (cols, rows) => Session?.Resize(cols, rows);
         _canvas.GotKeyboardFocus += (_, _) => Activated?.Invoke();
         _canvas.PreviewMouseDown += (_, _) => _canvas.Focus();
+
+        AllowDrop = true;
+        DragOver += OnDragOver;
+        DragLeave += (_, _) => _dropZoneOverlay.Visibility = Visibility.Collapsed;
+        Drop += OnDrop;
 
         Loaded += OnLoaded;
     }
@@ -118,7 +154,106 @@ public sealed class TerminalPaneControl : Grid
         panel.Children.Add(refreshButton);
 
         panel.Children.Add(_titleText);
+
+        // The title bar is both the "click to activate" target and the drag handle —
+        // clicking it should feel the same as clicking anywhere else in the pane.
+        panel.PreviewMouseLeftButtonDown += (_, _) =>
+        {
+            _dragStartPoint = Mouse.GetPosition(null);
+            _canvas.Focus();
+        };
+        panel.PreviewMouseMove += OnHeaderPreviewMouseMove;
+
         return panel;
+    }
+
+    private void OnHeaderPreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_dragStartPoint is null || e.LeftButton != MouseButtonState.Pressed) return;
+
+        var pos = e.GetPosition(null);
+        if (Math.Abs(pos.X - _dragStartPoint.Value.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(pos.Y - _dragStartPoint.Value.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+
+        _dragStartPoint = null;
+        DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(DragFormat, PaneId), DragDropEffects.Move);
+    }
+
+    private void OnDragOver(object sender, DragEventArgs e)
+    {
+        if (!IsValidDrag(e))
+        {
+            e.Effects = DragDropEffects.None;
+            _dropZoneOverlay.Visibility = Visibility.Collapsed;
+            e.Handled = true;
+            return;
+        }
+
+        ShowDropOverlay(ComputeDropZone(e.GetPosition(this)));
+        e.Effects = DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    private void OnDrop(object sender, DragEventArgs e)
+    {
+        _dropZoneOverlay.Visibility = Visibility.Collapsed;
+        if (!IsValidDrag(e)) return;
+
+        var sourcePaneId = (Guid)e.Data.GetData(DragFormat)!;
+        var zone = ComputeDropZone(e.GetPosition(this));
+        e.Handled = true;
+        DockRequested?.Invoke(sourcePaneId, zone);
+    }
+
+    private bool IsValidDrag(DragEventArgs e) =>
+        e.Data.GetDataPresent(DragFormat) && e.Data.GetData(DragFormat) is Guid id && id != PaneId;
+
+    /// <summary>Left/right/top/bottom outer bands dock against that edge; the middle swaps.</summary>
+    private DropZone ComputeDropZone(Point position)
+    {
+        double w = Math.Max(ActualWidth, 1);
+        double h = Math.Max(ActualHeight, 1);
+        double xRatio = position.X / w;
+        double yRatio = position.Y / h;
+
+        if (xRatio < EdgeZoneFraction) return DropZone.Left;
+        if (xRatio > 1 - EdgeZoneFraction) return DropZone.Right;
+        if (yRatio < EdgeZoneFraction) return DropZone.Top;
+        if (yRatio > 1 - EdgeZoneFraction) return DropZone.Bottom;
+        return DropZone.Center;
+    }
+
+    private void ShowDropOverlay(DropZone zone)
+    {
+        _dropZoneOverlay.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _dropZoneOverlay.VerticalAlignment = VerticalAlignment.Stretch;
+        _dropZoneOverlay.Width = double.NaN;
+        _dropZoneOverlay.Height = double.NaN;
+
+        switch (zone)
+        {
+            case DropZone.Left:
+                _dropZoneOverlay.HorizontalAlignment = HorizontalAlignment.Left;
+                _dropZoneOverlay.Width = ActualWidth / 2;
+                break;
+            case DropZone.Right:
+                _dropZoneOverlay.HorizontalAlignment = HorizontalAlignment.Right;
+                _dropZoneOverlay.Width = ActualWidth / 2;
+                break;
+            case DropZone.Top:
+                _dropZoneOverlay.VerticalAlignment = VerticalAlignment.Top;
+                _dropZoneOverlay.Height = ActualHeight / 2;
+                break;
+            case DropZone.Bottom:
+                _dropZoneOverlay.VerticalAlignment = VerticalAlignment.Bottom;
+                _dropZoneOverlay.Height = ActualHeight / 2;
+                break;
+            case DropZone.Center:
+                break; // full-size stretch, as reset above
+        }
+
+        _dropZoneOverlay.Visibility = Visibility.Visible;
     }
 
     private static Button MakeButton(object content) => new()

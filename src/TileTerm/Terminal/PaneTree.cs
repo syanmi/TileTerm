@@ -11,6 +11,20 @@ public enum SplitDirection
 }
 
 /// <summary>
+/// Where a drag-and-drop tile was released over its target, VSCode-style:
+/// the four edges dock the dragged pane against that side, and the center
+/// swaps the two panes' positions.
+/// </summary>
+public enum DropZone
+{
+    Left,
+    Right,
+    Top,
+    Bottom,
+    Center,
+}
+
+/// <summary>
 /// One node of the pane layout tree. A window's whole layout is a binary
 /// tree of these: every <see cref="SplitNode"/> divides its area between two
 /// children (which may themselves be splits), and every <see cref="LeafNode"/>
