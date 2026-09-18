@@ -164,19 +164,19 @@ public sealed class ProfileStore
     {
         var list = new List<ProfileDefinition>
         {
-            new("Command Prompt", Path.Combine(Environment.SystemDirectory, "cmd.exe"), Array.Empty<string>(), HomeDir, icon: ">_"),
+            new("Command Prompt", Path.Combine(Environment.SystemDirectory, "cmd.exe"), Array.Empty<string>(), HomeDir),
         };
 
         var powershell = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
         if (File.Exists(powershell))
-            list.Add(new ProfileDefinition("Windows PowerShell", powershell, Array.Empty<string>(), HomeDir, icon: "PS"));
+            list.Add(new ProfileDefinition("Windows PowerShell", powershell, Array.Empty<string>(), HomeDir));
 
         const string gitBash = @"C:\Program Files\Git\bin\bash.exe";
         if (File.Exists(gitBash))
-            list.Add(new ProfileDefinition("Git Bash", gitBash, new[] { "--login", "-i" }, HomeDir, icon: "$"));
+            list.Add(new ProfileDefinition("Git Bash", gitBash, new[] { "--login", "-i" }, HomeDir));
 
         if (TryResolveOnPath("claude", out var claudePath))
-            list.Add(new ProfileDefinition("Claude Code", claudePath, Array.Empty<string>(), HomeDir, icon: "🤖"));
+            list.Add(new ProfileDefinition("Claude Code", claudePath, Array.Empty<string>(), HomeDir));
 
         return list;
     }

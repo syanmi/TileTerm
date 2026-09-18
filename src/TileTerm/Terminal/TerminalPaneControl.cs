@@ -42,6 +42,7 @@ public sealed class TerminalPaneControl : Grid
 
     private readonly TerminalCanvas _canvas = new();
     private readonly TextBlock _titleText;
+    private readonly Image _titleIcon;
     private readonly Border _activeBorder;
     private readonly Border _dropZoneOverlay;
     private readonly TextBox _imeBox;
@@ -76,8 +77,11 @@ public sealed class TerminalPaneControl : Grid
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(6, 0, 0, 0),
             FontSize = 12,
-            Text = $"{profile.DisplayIcon()}  {profile.Name}",
+            Text = profile.Name,
         };
+        _titleIcon = ProfileIcons.CreateImage(ProfileIcons.Get(profile));
+        _titleIcon.Margin = new Thickness(6, 0, 0, 0);
+        _titleIcon.VerticalAlignment = VerticalAlignment.Center;
 
         // Header + canvas live inside their own inset grid, so the active-pane border
         // (below) can be drawn at the pane's true outer edge without ever overlapping
@@ -221,6 +225,8 @@ public sealed class TerminalPaneControl : Grid
         DockPanel.SetDock(refreshButton, Dock.Right);
         panel.Children.Add(refreshButton);
 
+        DockPanel.SetDock(_titleIcon, Dock.Left);
+        panel.Children.Add(_titleIcon);
         panel.Children.Add(_titleText);
 
         // The title bar is both the "click to activate" target and the drag handle —
@@ -364,9 +370,9 @@ public sealed class TerminalPaneControl : Grid
 
         Session.OutputReceived += () => Dispatcher.BeginInvoke(() => _canvas.InvalidateVisual());
         Session.Exited += code => Dispatcher.BeginInvoke(() =>
-            _titleText.Text = $"{Profile.DisplayIcon()}  {Profile.Name} (終了 code={code})");
+            _titleText.Text = $"{Profile.Name} (終了 code={code})");
 
-        _titleText.Text = $"{Profile.DisplayIcon()}  {Profile.Name}";
+        _titleText.Text = Profile.Name;
         _imeBox.Focus();
 
         try

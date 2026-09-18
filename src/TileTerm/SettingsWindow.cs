@@ -5,6 +5,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Media;
 using TileTerm.Terminal;
 
 namespace TileTerm;
@@ -31,7 +32,6 @@ public sealed class SettingsWindow : Window
     private readonly ProfileStore _store;
     private readonly ListBox _list = Theme.ListBox();
     private readonly TextBox _nameBox = Theme.TextBox();
-    private readonly TextBox _iconBox = Theme.TextBox();
     private readonly TextBox _exeBox = Theme.TextBox();
     private readonly TextBox _argsBox = Theme.TextBox();
     private readonly TextBox _cwdBox = Theme.TextBox();
@@ -43,6 +43,14 @@ public sealed class SettingsWindow : Window
         c.Margin = new Thickness(14, 0, 0, 0);
         c.ToolTip = "タイトルバーにこのプロンプトのボタンが表示されます";
     });
+    private readonly Image _iconPreview = ProfileIcons.CreateImage(ProfileIcons.Get(null, null, null), 16);
+    private readonly TextBlock _iconResetLink = new()
+    {
+        Text = "既定に戻す", Foreground = Theme.Accent, FontSize = 11, Cursor = Cursors.Hand,
+        Margin = new Thickness(8, 3, 0, 0), Visibility = Visibility.Collapsed,
+        ToolTip = "アイコンを実行ファイルのアイコンに戻します",
+    };
+    private string _iconPath = "";
     private ProfileDefinition? _editing;
     private bool _suppressToggleEvents;
     private (string, string, string, string, string) _loadedFields;
@@ -52,7 +60,7 @@ public sealed class SettingsWindow : Window
         _store = store;
         Title = "TileTerm - 設定";
         Width = 920;
-        Height = 640;
+        Height = 540;
         MinWidth = 700;
         MinHeight = 460;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -72,8 +80,11 @@ public sealed class SettingsWindow : Window
 
         Content = outer;
 
-        foreach (var box in new[] { _nameBox, _iconBox, _exeBox, _argsBox, _cwdBox })
+        foreach (var box in new[] { _nameBox, _exeBox, _argsBox, _cwdBox })
             box.TextChanged += (_, _) => UpdateApplyState();
+        // The icon preview depends on the executable (default icon) and name (fallback letter).
+        _nameBox.TextChanged += (_, _) => UpdateIconPreview();
+        _exeBox.TextChanged += (_, _) => UpdateIconPreview();
 
         PreviewKeyDown += (_, e) =>
         {
@@ -211,9 +222,18 @@ public sealed class SettingsWindow : Window
 
         dock.AppendChild(rightPanel);
 
+        var icon = new FrameworkElementFactory(typeof(Image));
+        icon.SetValue(FrameworkElement.WidthProperty, 16.0);
+        icon.SetValue(FrameworkElement.HeightProperty, 16.0);
+        icon.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 7, 0));
+        icon.SetValue(DockPanel.DockProperty, Dock.Left);
+        icon.SetValue(RenderOptions.BitmapScalingModeProperty, BitmapScalingMode.HighQuality);
+        icon.SetBinding(Image.SourceProperty, new Binding(nameof(ProfileRow.Icon)));
+        dock.AppendChild(icon);
+
         var nameText = new FrameworkElementFactory(typeof(TextBlock));
         nameText.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
-        nameText.SetBinding(TextBlock.TextProperty, new Binding(nameof(ProfileRow.IconAndName)));
+        nameText.SetBinding(TextBlock.TextProperty, new Binding(nameof(ProfileRow.Name)));
         dock.AppendChild(nameText);
 
         return new DataTemplate { VisualTree = dock };
@@ -227,11 +247,21 @@ public sealed class SettingsWindow : Window
         form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(LabelColumnWidth) });
         form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        AddFormRow(form, "名前", _nameBox, null);
-        AddFormRow(form, "表示アイコン", _iconBox, "絵文字や \"PS\" のような短い文字列。空欄なら名前の頭文字");
-        AddFormRow(form, "実行ファイル", WithBrowseButton(_exeBox), ".exe / .cmd / .bat");
-        AddFormRow(form, "引数", _argsBox, "スペース区切り。空白を含む場合は \"...\" で囲む");
-        AddFormRow(form, "作業ディレクトリ", _cwdBox, "空欄ならユーザーフォルダ");
+        AddFormRow(form, "名前", WithIconButton(_nameBox), BuildIconHint());
+
+        // Name (and its icon) is what identifies the entry; everything below configures how
+        // it launches, so the two groups get a divider between them.
+        int dividerRow = form.RowDefinitions.Count;
+        form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var divider = Theme.Divider(vertical: false);
+        divider.Margin = new Thickness(0, 2, 0, 12);
+        Grid.SetRow(divider, dividerRow);
+        Grid.SetColumnSpan(divider, 2);
+        form.Children.Add(divider);
+
+        AddFormRow(form, "実行ファイル", WithBrowseButton(_exeBox), Theme.Hint(".exe / .cmd / .bat"));
+        AddFormRow(form, "引数", _argsBox, Theme.Hint("スペース区切り。空白を含む場合は \"...\" で囲む"));
+        AddFormRow(form, "作業ディレクトリ", _cwdBox, Theme.Hint("空欄ならユーザーフォルダ"));
 
         var optionsRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
         optionsRow.Children.Add(_defaultButton);
@@ -248,7 +278,7 @@ public sealed class SettingsWindow : Window
         return new ScrollViewer { Content = form, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, 4, 0) };
     }
 
-    private static void AddFormRow(Grid form, string label, UIElement field, string? hint)
+    private static void AddFormRow(Grid form, string label, UIElement field, UIElement? hint)
     {
         int row = form.RowDefinitions.Count;
         form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -265,13 +295,68 @@ public sealed class SettingsWindow : Window
         cell.Children.Add(field);
         if (hint is not null)
         {
-            var hintBlock = Theme.Hint(hint);
-            hintBlock.Margin = new Thickness(1, 3, 0, 0);
-            cell.Children.Add(hintBlock);
+            if (hint is FrameworkElement hintElement) hintElement.Margin = new Thickness(1, 3, 0, 0);
+            cell.Children.Add(hint);
         }
         Grid.SetRow(cell, row);
         Grid.SetColumn(cell, 1);
         form.Children.Add(cell);
+    }
+
+    /// <summary>The name field with the profile's icon as a small square button to its right;
+    /// clicking it picks an image (shown as the icon) or any other file (its own icon is used).</summary>
+    private UIElement WithIconButton(TextBox nameBox)
+    {
+        var iconButton = Theme.Button(_iconPreview);
+        iconButton.Padding = new Thickness(0);
+        iconButton.Width = Theme.ControlHeight;
+        iconButton.Height = Theme.ControlHeight;
+        iconButton.Margin = new Thickness(6, 0, 0, 0);
+        iconButton.ToolTip = "アイコンを変更（画像、または任意のファイルを選択）";
+        AutomationProperties.SetName(iconButton, "アイコンを変更");
+        iconButton.Click += (_, _) => PickIcon();
+
+        var row = new DockPanel();
+        DockPanel.SetDock(iconButton, Dock.Right);
+        row.Children.Add(iconButton);
+        row.Children.Add(nameBox);
+        return row;
+    }
+
+    private UIElement BuildIconHint()
+    {
+        _iconResetLink.MouseLeftButtonUp += (_, _) =>
+        {
+            _iconPath = "";
+            UpdateIconPreview();
+            UpdateApplyState();
+        };
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(Theme.Hint("右のアイコンをクリックして変更。未設定なら実行ファイルのアイコン"));
+        row.Children.Add(_iconResetLink);
+        return row;
+    }
+
+    private void PickIcon()
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = ProfileIcons.PickerFilter,
+            CheckFileExists = true,
+            Title = "アイコンにする画像またはファイルを選択",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        _iconPath = dlg.FileName;
+        UpdateIconPreview();
+        UpdateApplyState();
+    }
+
+    private void UpdateIconPreview()
+    {
+        _iconPreview.Source = ProfileIcons.Get(_iconPath, _exeBox.Text.Trim(), _nameBox.Text);
+        _iconResetLink.Visibility = string.IsNullOrEmpty(_iconPath) ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>The field followed by a small folder button that opens a file picker — the
@@ -357,7 +442,7 @@ public sealed class SettingsWindow : Window
     }
 
     private (string, string, string, string, string) CurrentFields() =>
-        (_nameBox.Text, _iconBox.Text, _exeBox.Text, _argsBox.Text, _cwdBox.Text);
+        (_nameBox.Text, _iconPath, _exeBox.Text, _argsBox.Text, _cwdBox.Text);
 
     /// <summary>適用 is only meaningful while the form differs from what was loaded into it.</summary>
     private void UpdateApplyState() =>
@@ -369,10 +454,11 @@ public sealed class SettingsWindow : Window
 
         _suppressToggleEvents = true;
         _nameBox.Text = _editing?.Name ?? "";
-        _iconBox.Text = _editing?.Icon ?? "";
+        _iconPath = _editing?.IconPath ?? "";
         _exeBox.Text = _editing?.Executable ?? "";
         _argsBox.Text = _editing is null ? "" : CommandLineText.Join(_editing.Arguments);
         _cwdBox.Text = _editing?.WorkingDirectory ?? "";
+        UpdateIconPreview();
 
         bool hasSelection = _editing is not null;
         _defaultButton.IsEnabled = hasSelection && _store.GetDefaultProfile() != _editing;
@@ -396,7 +482,7 @@ public sealed class SettingsWindow : Window
         if (_editing is null) return;
 
         _editing.Name = string.IsNullOrWhiteSpace(_nameBox.Text) ? "(名称未設定)" : _nameBox.Text.Trim();
-        _editing.Icon = _iconBox.Text.Trim();
+        _editing.IconPath = string.IsNullOrWhiteSpace(_iconPath) ? null : _iconPath;
         _editing.Executable = _exeBox.Text.Trim();
         _editing.Arguments = CommandLineText.Split(_argsBox.Text);
         _editing.WorkingDirectory = string.IsNullOrWhiteSpace(_cwdBox.Text) ? null : _cwdBox.Text.Trim();
@@ -415,7 +501,7 @@ public sealed class SettingsWindow : Window
     {
         var selected = _editing;
         var rows = _store.Profiles.Select(p => new ProfileRow(
-            p, $"{p.DisplayIcon()}  {p.Name}", p.Id == _store.DefaultProfileId, _store.IsFavorite(p))).ToList();
+            p, p.Name, ProfileIcons.Get(p), p.Id == _store.DefaultProfileId, _store.IsFavorite(p))).ToList();
         _list.ItemsSource = rows;
 
         if (selected is not null)
@@ -424,7 +510,7 @@ public sealed class SettingsWindow : Window
         LoadSelected();
     }
 
-    private sealed record ProfileRow(ProfileDefinition Profile, string IconAndName, bool IsDefault, bool IsFavorite)
+    private sealed record ProfileRow(ProfileDefinition Profile, string Name, ImageSource Icon, bool IsDefault, bool IsFavorite)
     {
         // WPF exposes a ListBoxItem's UI Automation Name via the bound object's
         // ToString() unless told otherwise — without this override it falls back
@@ -438,7 +524,7 @@ public sealed class SettingsWindow : Window
                 (false, true) => "（お気に入り）",
                 _ => "",
             };
-            return IconAndName + suffix;
+            return Name + suffix;
         }
     }
 

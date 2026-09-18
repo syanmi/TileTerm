@@ -108,6 +108,21 @@ public partial class MainWindow : Window
             FavoritesPanel.Children.Add(BuildFavoriteButton(profile));
     }
 
+    /// <summary>"アイコン画像 名前" — the profile's icon followed by its name.</summary>
+    private static UIElement BuildFavoriteContent(ProfileDefinition profile)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        var icon = ProfileIcons.CreateImage(ProfileIcons.Get(profile));
+        icon.VerticalAlignment = VerticalAlignment.Center;
+        panel.Children.Add(icon);
+        panel.Children.Add(new TextBlock
+        {
+            Text = profile.Name, FontSize = 12, Foreground = Brushes.Gainsboro,
+            Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
+        });
+        return panel;
+    }
+
     private Button BuildFavoriteButton(ProfileDefinition profile)
     {
         // A real Button (rather than a plain Border) so it's a proper control:
@@ -116,7 +131,7 @@ public partial class MainWindow : Window
         var button = new Button
         {
             Style = (Style)FindResource("TitleBarButton"),
-            Content = new TextBlock { Text = profile.DisplayIcon(), FontSize = 13, Foreground = Brushes.Gainsboro },
+            Content = BuildFavoriteContent(profile),
             ToolTip = $"{profile.Name}\nダブルクリック: 縦分割 / 右ダブルクリック: 横分割",
         };
         AutomationProperties.SetName(button, $"お気に入り: {profile.Name}");

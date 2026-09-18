@@ -18,10 +18,10 @@ public sealed class ProfileDefinition
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "New Profile";
 
-    /// <summary>Short text shown as this profile's icon (an emoji, or a couple of
-    /// characters like "PS" or "$") — kept as plain text rather than an image so it
-    /// never depends on a bundled asset or icon font.</summary>
-    public string Icon { get; set; } = "";
+    /// <summary>Where this profile's icon comes from: an image file (shown as-is), or any
+    /// other file (that file's own shell icon is used). Null/empty means "use the icon of
+    /// <see cref="Executable"/>". See <see cref="TileTerm.ProfileIcons"/>.</summary>
+    public string? IconPath { get; set; }
 
     public string Executable { get; set; } = "";
     public string[] Arguments { get; set; } = Array.Empty<string>();
@@ -29,25 +29,19 @@ public sealed class ProfileDefinition
 
     public ProfileDefinition() { }
 
-    public ProfileDefinition(string name, string executable, string[] arguments, string? workingDirectory = null, string icon = "")
+    public ProfileDefinition(string name, string executable, string[] arguments, string? workingDirectory = null)
     {
         Name = name;
         Executable = executable;
         Arguments = arguments;
         WorkingDirectory = workingDirectory;
-        Icon = icon;
     }
-
-    /// <summary>The icon to actually display: the configured one, or the profile
-    /// name's first letter if none was set.</summary>
-    public string DisplayIcon() =>
-        string.IsNullOrWhiteSpace(Icon) ? (Name.Length > 0 ? Name[0].ToString().ToUpperInvariant() : "?") : Icon;
 
     public ProfileDefinition Clone() => new()
     {
         Id = Id,
         Name = Name,
-        Icon = Icon,
+        IconPath = IconPath,
         Executable = Executable,
         Arguments = (string[])Arguments.Clone(),
         WorkingDirectory = WorkingDirectory,
