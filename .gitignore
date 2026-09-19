@@ -34,3 +34,13 @@ bld/
 # OS files
 Thumbs.db
 .DS_Store
+
+# Release packaging output (scripts/build_release.ps1)
+artifacts/
+
+# Logs and stray test captures
+*.log
+/e1_settings.png
+
+# Local-only design reference (a third-party product's screenshot; not redistributed)
+reference/

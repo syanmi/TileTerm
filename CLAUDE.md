@@ -13,6 +13,27 @@
 - **別の場所のcloneが古い履歴を持っている場合は、そこから`push`し直さないこと**(古いコミットが復活する)。作り直すか、`git fetch`して`git reset --hard origin/master`する
 - 履歴を書き換えた後は、`git filter-branch`が自動で作る退避用の参照`refs/original/`(ローカルのみ)が残るので、確認後に`git update-ref -d`で消す。ブランチ一覧(`git branch`)には出ないので見落としやすい
 
+## リリース
+
+GitHub Releasesで配布する。形態は2つで、どちらも.NETランタイムを同梱した(self-contained)win-x64の単一exe(約61MB、zip/インストーラで約56MB)なので、利用者に.NETのインストールは不要。
+
+- **インストーラ** `TileTerm-vX.Y.Z-win-x64-setup.exe`: Inno Setup(`installer/TileTerm.iss`)。既定はユーザー単位のインストール(管理者権限不要、`%LOCALAPPDATA%\Programs\TileTerm`)で、ウィザードで「全ユーザー」も選べる。スタートメニュー登録、任意でデスクトップアイコン、日本語/英語のウィザード、Windows 10 1809(ConPTYの要件)以上・x64のみ。アンインストールしても`%AppData%\TileTerm`のユーザーデータは残す。`AppId`のGUIDは版をまたいで**絶対に変えない**(アップグレードとアンインストール情報の識別に使う)
+- **ポータブル** `TileTerm-vX.Y.Z-win-x64-portable.zip`: 展開したフォルダで完結する。zip内の空ファイル`TileTerm.portable`があると、`AppPaths.cs`がデータ(`profiles.json`/`settings.json`)の保存先を`%AppData%\TileTerm`ではなく**exeの隣の`data`フォルダ**にする(`data`に書き込めない場所ならAppDataに黙ってフォールバック)。マーカーが無い通常の実行(開発時の`bin\Debug`やインストール版)は従来どおりAppData
+- 各Releaseには`SHA256SUMS.txt`も添付する。**コード署名はしていない**ので初回起動でSmartScreenの警告が出ることがある(READMEに説明済み)。署名が必要になったらSignPath FoundationのOSS向け無償署名などを検討する
+
+**リリース手順**(通常のGitHubの流れ):
+
+1. `src/TileTerm/TileTerm.csproj`の`Version`/`AssemblyVersion`/`FileVersion`を上げてコミット
+2. 注釈付きタグ`vX.Y.Z`を打つ(`git tag -a vX.Y.Z -m "..."`)。`-`を含むタグ(`v1.0.0-beta.1`)はPre-releaseとして公開される
+3. `git push origin master vX.Y.Z` → `.github/workflows/release.yml`が`scripts/build_release.ps1 -Tag vX.Y.Z`を実行し、ポータブルzip・インストーラ・`SHA256SUMS.txt`を添付したReleaseを作る(リリースノートはGitHubの自動生成)。**タグとcsprojの`Version`が食い違うとスクリプトが失敗する**(前述のバージョニング規則の機械的なチェック)
+4. Actionsの「Run workflow」(`workflow_dispatch`)で、Releaseを作らずにパッケージだけ作って試せる(成果物はワークフローのアーティファクトに残る)
+
+**ローカルで再現**: `scripts\build_release.ps1 [-SkipInstaller]`を実行すると`artifacts/`(gitignore済み)にできる。インストーラにはInno Setup 6.3以降が必要(PATH、既定のインストール先、または環境変数`ISCC_PATH`で見つける)。このスクリプトがパッケージ作成の唯一の定義で、CIはそれを呼ぶだけ。**スクリプトはASCIIのみ**で書く(BOMなしUTF-8はWindows PowerShell 5.1が文字化けさせる)。zipは`ZipFile.CreateFromDirectory`ではなく1ファイルずつ追加している(5.1のそれはパス区切りに`\`を使い、他OSの解凍ツールで壊れるため)。`.gitignore`に`build/`があるので、パッケージ関連のフォルダ名に`build`は使わない(`installer/`にしている)
+
+**確認済み/未確認**: ローカルで、スクリプト一式(タグ不一致で失敗すること、zipの中身、チェックサム)、ポータブル版の起動とデータが`data`に作られAppDataを触らないこと、インストーラの静かなインストール→起動→アンインストール(ショートカット・登録情報が消え、ユーザーデータが残る)を確認した。**GitHub Actions上での実行は未確認**(YAMLの構文は確認したが、ランナー上のInno Setup導入(`choco install innosetup`)やPowerShell 7での動作は実際に走らせていない)。最初は`workflow_dispatch`で試すこと
+
+**その他**: `THIRD-PARTY-NOTICES.md`は依存ライブラリを増減したら更新する(バイナリ配布ではMITの著作権表示の同梱が必要)。`reference/`(JetBrains製品のスクリーンショット)は第三者の著作物なのでgitignoreにしたが、過去のコミットには残っている。`v0.1.0`のタグはこの仕組みの導入前(M10時点)に打ったものなので、最初の公開リリースは新しい版(例: v0.2.0)にする。アップデート通知は未実装(方針: 起動時に一定間隔でGitHub Releasesの`releases/latest`を見て、新しければ通知してReleasesページへのリンクを出す。設定でオフにできるようにする。自動更新までは行わない)
+
 ## コンセプト・狙い
 
 - コンソールアプリを操作するための Terminal ツール
@@ -225,6 +246,12 @@ OSデフォルトの装飾（`WindowStyle="None"` + `WindowChrome`）を捨て�
   - **既知の制約**: ライトテーマでもタイルは黒いままなので、明るい画面の中に黒い面が大きく残る(意図した仕様)。ターミナルの配色そのものをテーマ連動/ユーザー設定にしたくなった場合は`TileScheme`をパレット化して`AnsiPalette`から参照する形に戻せばよい。プロンプトの頭文字タイル(`ProfileIcons.LetterTile`)はテーマに関わらず従来のグレー地
   - **確認済み**(UI Automation+`PrintWindow`のスクリーンショット): ダークが従来と同じ見た目、設定の「テーマ」ページ、ライトを選ぶと`適用`が有効になり適用で本体・設定・OSタイトルバーが即座に切り替わる、再起動後もライトが維持される、ライト時の確認ダイアログ、ダークへ戻す、ライト時にタイルが暗いまま(タイトル帯の文字・ボタンも読める)で複数分割できること、設定ダイアログのライト配色をCLionの参考画像と見比べて同系統であること。exeの関連付けアイコンとしてオーブが取れること(`ExtractAssociatedIcon`)。アイコンは明るい/暗い背景での見え方を実測(縁の輝度コントラスト比: 暗背景で中央値約5.7、明背景で約2.5〜2.6。シアンの部分が明背景で最も弱い)し、拡大画像で確認したが、どちらでも円形のマークとして識別できる。**未確認**: タスクバー/Alt+Tabでの実際のアイコン表示
   - **UI自動確認のメモ**: 設定ダイアログ等のOwner付きウィンドウはUIAツリー上では本体ウィンドウの**子**として現れる(`RootElement`直下を探しても見つからない)。Windows PowerShell 5.1は**BOMなしUTF-8の`.ps1`を文字化け**させるので、日本語を含むスクリプトはBOM付きで保存する。`SelectionItemPattern.Select()`でリスト項目/ラジオボタンを選べる
+
+- ✅ **M19: 公開の準備（ライセンス・README・ポータブル/インストーラ・リリース自動化）**（2026-09-19 完了）
+  - `LICENSE`(MIT、`Copyright (c) 2026 syanmi`)、`THIRD-PARTY-NOTICES.md`(Porta.Pty/XTerm.NET/.NETはいずれもMIT)、`README.md`(**英語**。UIが日本語のみである旨を冒頭に明記している。スクリーンショットは`docs/images/`。個人情報が写らないよう、ポータブル版のdataフォルダにデモ用のプロファイルを置いて撮影した)を追加。ライセンスは`syanmi`名義のMITにしたが、公開前ならいつでも変更できる。`.gitignore`に`artifacts/`・`*.log`・`reference/`などを追加し、`reference/ref_CLion-settings.png`は追跡をやめた(ファイル自体はローカルに残っている)
+  - **ポータブル版のデータ保存先**: `AppPaths.cs`を新設し、`TileTerm.portable`マーカーがあるときだけ`data`フォルダ(exeの隣)を使う。`ProfileStore`と`AppSettings`はここを参照する
+  - パッケージ作成`scripts/build_release.ps1`、インストーラ`installer/TileTerm.iss`、CI(`.github/workflows/ci.yml`はpush/PRでビルド、`release.yml`はタグでリリース作成)。詳細は前の「リリース」の節を参照
+  - **ハマった点**: ①Inno Setupを検証用に入れる時、推測したダウンロードURLはHTMLのページを返した(公式の入手は`winget download --id JRSoftware.InnoSetup`がハッシュ検証つきで確実)②Windows PowerShell 5.1の`ZipFile.CreateFromDirectory`はzipの中のパス区切りが`\`になる③`.ps1`はBOMなしだと日本語が文字化けする(スクリプトはASCIIのみにした)
 
 ## 未実装（コンセプト自体には含まれない、品質・UX向上の候補）
 

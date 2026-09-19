@@ -7,7 +7,7 @@ namespace TileTerm;
 
 /// <summary>
 /// App-wide preferences that aren't tied to a profile (today: just the theme), kept in
-/// <c>%AppData%\TileTerm\settings.json</c> next to <c>profiles.json</c>. A missing or
+/// <c>settings.json</c> next to <c>profiles.json</c> (see <see cref="AppPaths"/>). A missing or
 /// unreadable file simply means "defaults" — the theme falls back to Dark.
 /// </summary>
 internal sealed class AppSettings
@@ -17,15 +17,7 @@ internal sealed class AppSettings
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public ThemeKind Theme { get; set; } = ThemeKind.Dark;
 
-    private static string FilePath
-    {
-        get
-        {
-            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TileTerm");
-            Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "settings.json");
-        }
-    }
+    private static string FilePath => Path.Combine(AppPaths.DataDirectory, "settings.json");
 
     public static AppSettings Load()
     {

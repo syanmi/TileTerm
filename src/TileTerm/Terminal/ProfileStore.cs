@@ -8,7 +8,8 @@ namespace TileTerm.Terminal;
 
 /// <summary>
 /// Loads/saves the user's console-app profiles as JSON under
-/// <c>%AppData%\TileTerm\profiles.json</c>, and seeds sensible defaults the
+/// <c>profiles.json</c> in <see cref="AppPaths.DataDirectory"/> (<c>%AppData%\TileTerm</c>, or a
+/// <c>data</c> folder beside the exe in the portable build), and seeds sensible defaults the
 /// first time the app runs (only for apps actually found on this machine).
 /// Also tracks which single profile is the "既定" (default — used when the
 /// title bar's plain split buttons are clicked) and which profiles are
@@ -25,9 +26,7 @@ public sealed class ProfileStore
 
     public ProfileStore()
     {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TileTerm");
-        Directory.CreateDirectory(dir);
-        _filePath = Path.Combine(dir, "profiles.json");
+        _filePath = Path.Combine(AppPaths.DataDirectory, "profiles.json");
     }
 
     public void Load()
