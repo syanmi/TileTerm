@@ -4,7 +4,7 @@
 
 ## バージョニング
 
-`src/TileTerm/TileTerm.csproj` の `Version`/`AssemblyVersion`/`FileVersion` で管理する。対応するgitタグ（`vX.Y.Z`、annotated tag）をマイルストーンの区切りごとに打つ。**v0.1.0**（2026-09-18）が最初のタグで、M1〜M10（コンセプト機能一式＋UIの各種修正）までを含む。バージョンを上げる際は、csprojの値を更新するコミットを作ってからタグを打つこと（タグの指すコミットとcsprojの値が一致するように）。
+**バージョンは`src/TileTerm/TileTerm.csproj`の`<Version>`の1か所だけ**(`AssemblyVersion`/`FileVersion`は.NET SDKがこれから導出するので書かない)。対応する注釈付きgitタグ`vX.Y.Z`を打つ。版を上げてタグを打つ作業は`scripts\release.ps1`が行う(後述の「リリース」)。**v0.1.0**(2026-09-18)はM1〜M10時点でのタグで、リリースの仕組みができる前のものなので、GitHub Releaseは作っていない。最初の公開リリースは**v0.1.1**。
 
 ## Gitの運用
 
@@ -15,24 +15,33 @@
 
 ## リリース
 
-GitHub Releasesで配布する。形態は2つで、どちらも.NETランタイムを同梱した(self-contained)win-x64の単一exe(約61MB、zip/インストーラで約56MB)なので、利用者に.NETのインストールは不要。
+GitHub Releasesで配布する。パッケージは**Velopack**(.NET向けのインストーラ兼アップデータ、MIT)で作り、将来のアプリ内の自動アップデートも同じ仕組みで行う。
 
-- **インストーラ** `TileTerm-vX.Y.Z-win-x64-setup.exe`: Inno Setup(`installer/TileTerm.iss`)。既定はユーザー単位のインストール(管理者権限不要、`%LOCALAPPDATA%\Programs\TileTerm`)で、ウィザードで「全ユーザー」も選べる。スタートメニュー登録、任意でデスクトップアイコン、日本語/英語のウィザード、Windows 10 1809(ConPTYの要件)以上・x64のみ。アンインストールしても`%AppData%\TileTerm`のユーザーデータは残す。`AppId`のGUIDは版をまたいで**絶対に変えない**(アップグレードとアンインストール情報の識別に使う)
-- **ポータブル** `TileTerm-vX.Y.Z-win-x64-portable.zip`: 展開したフォルダで完結する。zip内の空ファイル`TileTerm.portable`があると、`AppPaths.cs`がデータ(`profiles.json`/`settings.json`)の保存先を`%AppData%\TileTerm`ではなく**exeの隣の`data`フォルダ**にする(`data`に書き込めない場所ならAppDataに黙ってフォールバック)。マーカーが無い通常の実行(開発時の`bin\Debug`やインストール版)は従来どおりAppData
-- 各Releaseには`SHA256SUMS.txt`も添付する。**コード署名はしていない**ので初回起動でSmartScreenの警告が出ることがある(READMEに説明済み)。署名が必要になったらSignPath FoundationのOSS向け無償署名などを検討する
+**Releaseに添付するもの**:
 
-**リリース手順**(通常のGitHubの流れ):
+- `TileTerm-win-Setup.exe` インストーラ。ワンクリック、ユーザー単位(管理者権限不要)で`%LOCALAPPDATA%\TileTerm`に入り、スタートメニューとデスクトップにショートカットを作る。**新しいSetup.exeを上書き実行するとその場で更新される**(確認済み)。アンインストールしても`%AppData%\TileTerm`のユーザーデータは残る。固定のURL`https://github.com/syanmi/TileTerm/releases/latest/download/TileTerm-win-Setup.exe`で常に最新版を取れる
+- `TileTerm-win-Portable.zip` ポータブル。展開して`TileTerm.exe`を実行する。データは展開先ルート(`TileTerm.exe`の隣)の`data`フォルダに置く(`AppPaths.cs`。`VelopackLocator.Current.IsPortable`が真のときだけ)。**更新で丸ごと入れ替わる`current`フォルダの外に置く**のが要点(中に置くと更新でデータが消える)。書き込めない場所ならAppDataに黙ってフォールバック
+- `TileTerm-<版>-full.nupkg`、`TileTerm-<版>-delta.nupkg`、`releases.win.json`、`assets.win.json`、`RELEASES`: アプリ内アップデータが読む更新パッケージとフィード。差分は変わったファイルだけ(0.1.1→0.1.2のローカル検証で差分約0.2MB、全体は約63MB)
+- `SHA256SUMS.txt`
 
-1. `src/TileTerm/TileTerm.csproj`の`Version`/`AssemblyVersion`/`FileVersion`を上げてコミット
-2. 注釈付きタグ`vX.Y.Z`を打つ(`git tag -a vX.Y.Z -m "..."`)。`-`を含むタグ(`v1.0.0-beta.1`)はPre-releaseとして公開される
-3. `git push origin master vX.Y.Z` → `.github/workflows/release.yml`が`scripts/build_release.ps1 -Tag vX.Y.Z`を実行し、ポータブルzip・インストーラ・`SHA256SUMS.txt`を添付したReleaseを作る(リリースノートはGitHubの自動生成)。**タグとcsprojの`Version`が食い違うとスクリプトが失敗する**(前述のバージョニング規則の機械的なチェック)
-4. Actionsの「Run workflow」(`workflow_dispatch`)で、Releaseを作らずにパッケージだけ作って試せる(成果物はワークフローのアーティファクトに残る)
+**作り方の要点**:
 
-**ローカルで再現**: `scripts\build_release.ps1 [-SkipInstaller]`を実行すると`artifacts/`(gitignore済み)にできる。インストーラにはInno Setup 6.3以降が必要(PATH、既定のインストール先、または環境変数`ISCC_PATH`で見つける)。このスクリプトがパッケージ作成の唯一の定義で、CIはそれを呼ぶだけ。**スクリプトはASCIIのみ**で書く(BOMなしUTF-8はWindows PowerShell 5.1が文字化けさせる)。zipは`ZipFile.CreateFromDirectory`ではなく1ファイルずつ追加している(5.1のそれはパス区切りに`\`を使い、他OSの解凍ツールで壊れるため)。`.gitignore`に`build/`があるので、パッケージ関連のフォルダ名に`build`は使わない(`installer/`にしている)
+- .NETランタイム同梱(self-contained, win-x64)。**単一exeにしない**: Velopackはファイル単位で差分を作るので、複数ファイルのままなら更新でランタイムを再取得せず小さく済む(インストール後は約140MB)。`vpk pack`のポータブル/インストーラはこの発行フォルダを包む
+- **`Program.cs`が本当のエントリポイント**(csprojの`StartupObject`と、`App.xaml`を`ApplicationDefinition`から`Page`へ変えることでWPF既定の`Main`を外している)。`VelopackApp.Build().Run()`を最初に呼ぶ必要がある: インストーラ/アップデータ/アンインストーラが特殊な引数でexeを起動した時、ここで処理してUIを出さずに終了する。通常起動では即座に戻り、Velopackでインストールされていない起動(IDEや`bin\Debug`)では何もしない。`vpk pack`が`Program.Main`にこの呼び出しがあるかを検査してくれる
+- **コード署名はしていない**ので初回起動でSmartScreenの警告が出ることがある(READMEに説明済み)。自動更新は「ダウンロードして実行する」経路なので、有効にする前に署名(SignPath FoundationのOSS向け無償署名など)を検討する
+- **アプリ内の更新確認と自動更新は未実装**。土台(フィードと差分、`Program.cs`のフック)と、Velopackのテスト用API(`TestVelopackLocator`+`SimpleFileSource`)を使った検証(インストール済み0.1.1から0.1.2の差分を見つけ、差分だけをダウンロードして全体を復元できる)までは済んでいる。実装する時: `new UpdateManager(new GithubSource("https://github.com/syanmi/TileTerm", null, false))`で`CheckForUpdatesAsync()`→`DownloadUpdatesAsync()`→`ApplyUpdatesAndRestart()`。`IsInstalled`が偽なら何もしない。設定でオフにでき、再起動で開いているタイルが閉じることをユーザーに伝える
 
-**確認済み/未確認**: ローカルで、スクリプト一式(タグ不一致で失敗すること、zipの中身、チェックサム)、ポータブル版の起動とデータが`data`に作られAppDataを触らないこと、インストーラの静かなインストール→起動→アンインストール(ショートカット・登録情報が消え、ユーザーデータが残る)を確認した。**GitHub Actions上での実行は未確認**(YAMLの構文は確認したが、ランナー上のInno Setup導入(`choco install innosetup`)やPowerShell 7での動作は実際に走らせていない)。最初は`workflow_dispatch`で試すこと
+**リリース手順**(すべて自動):
 
-**その他**: `THIRD-PARTY-NOTICES.md`は依存ライブラリを増減したら更新する(バイナリ配布ではMITの著作権表示の同梱が必要)。`reference/`(JetBrains製品のスクリーンショット)は第三者の著作物なのでgitignoreにしたが、過去のコミットには残っている。`v0.1.0`のタグはこの仕組みの導入前(M10時点)に打ったものなので、最初の公開リリースは新しい版(例: v0.2.0)にする。アップデート通知は未実装(方針: 起動時に一定間隔でGitHub Releasesの`releases/latest`を見て、新しければ通知してReleasesページへのリンクを出す。設定でオフにできるようにする。自動更新までは行わない)
+1. `scripts\release.ps1 -Version X.Y.Z`を実行する。masterで、追跡ファイルに未コミットの変更がなく、origin/masterより遅れておらず、タグが未使用であることを確認してから、csprojの版を更新して`Release vX.Y.Z`をコミットし、注釈付きタグ`vX.Y.Z`を打ってpushする(`-NoPush`で手元までで止められる)
+2. タグのpushで`.github/workflows/release.yml`が動き、`scripts/build_release.ps1 -Tag vX.Y.Z`でパッケージを作ってReleaseを公開する。`-`を含む版(`1.0.0-beta.1`)はPre-releaseになる。**タグとcsprojの`Version`が食い違うとスクリプトが失敗する**
+3. Actionsの「Run workflow」(`workflow_dispatch`)で、Releaseを作らずにパッケージだけ作って試せる(成果物はワークフローのアーティファクトに残る)。`ci.yml`は毎push/PRで、ビルドに加えて同じパッケージ作成を走らせる(公開はしない)ので、パッケージ作成の破損はリリース前に分かる
+
+**リリースノート**は手書きしない。`scripts/release_notes.ps1`が前のタグからのコミット件名を並べて作る(このプロジェクトはPRを使わず`master`へ直接コミットするため、GitHubの自動生成ノートはほぼ空になる。`Release v`で始まるコミットは除く)。同じ文がフィード(`releases.win.json`)にも入り、アプリ内アップデータの表示に使える。**コミット件名を読みやすく書くことがそのままノートの質になる**
+
+**ローカルで再現**: `dotnet tool restore`(`vpk`を入れる)→`scripts\build_release.ps1 -SkipDeltaBase`で`artifacts/`(gitignore済み。アップロード対象は`artifacts/release/`)にできる。`-DeltaBaseDir <前のリリースのフォルダ>`で差分をローカルで試せる。実際のリリースでは`vpk download github`で前のReleaseの全体パッケージを取得して差分を作る(最初のリリースでは何も無くても警告だけで成功する)。`vpk`は`.config/dotnet-tools.json`で版を固定したローカルツールで、アプリが参照する`Velopack`ライブラリと同じ版に揃える。スクリプトは**ASCIIのみ**で書く(BOMなしUTF-8はWindows PowerShell 5.1が文字化けさせる)。`.gitignore`に`build/`があるので、パッケージ関連のフォルダ名に`build`は使わない
+
+**その他**: `THIRD-PARTY-NOTICES.md`は依存ライブラリを増減したら更新する(バイナリ配布ではMITの著作権表示の同梱が必要)。`reference/`(JetBrains製品のスクリーンショット)は第三者の著作物なのでgitignoreにしたが、過去のコミットには残っている
 
 ## コンセプト・狙い
 
@@ -252,6 +261,13 @@ OSデフォルトの装飾（`WindowStyle="None"` + `WindowChrome`）を捨て�
   - **ポータブル版のデータ保存先**: `AppPaths.cs`を新設し、`TileTerm.portable`マーカーがあるときだけ`data`フォルダ(exeの隣)を使う。`ProfileStore`と`AppSettings`はここを参照する
   - パッケージ作成`scripts/build_release.ps1`、インストーラ`installer/TileTerm.iss`、CI(`.github/workflows/ci.yml`はpush/PRでビルド、`release.yml`はタグでリリース作成)。詳細は前の「リリース」の節を参照
   - **ハマった点**: ①Inno Setupを検証用に入れる時、推測したダウンロードURLはHTMLのページを返した(公式の入手は`winget download --id JRSoftware.InnoSetup`がハッシュ検証つきで確実)②Windows PowerShell 5.1の`ZipFile.CreateFromDirectory`はzipの中のパス区切りが`\`になる③`.ps1`はBOMなしだと日本語が文字化けする(スクリプトはASCIIのみにした)
+
+- ✅ **M20: Velopackのパッケージ/更新基盤、リリース自動化、v0.1.1の公開**（2026-09-19 完了）
+  - M19で作ったInno Setup(+自前のポータブルzip)を**Velopackに置き換えた**(公開前だったので、既存の利用者への乗り換え負担がなかった)。理由: 自動アップデートを見据え、インストーラ・ポータブル・更新パッケージ・差分・GitHub Releasesのフィードを一つの仕組みで賄えるため。`Velopack`(NuGet)と`vpk`(ローカルツール)は1.2.0に揃えた。`installer/TileTerm.iss`は削除
+  - アプリ側: `Program.cs`(本当のエントリポイント)に`VelopackApp.Build().Run()`、`AppPaths.cs`のポータブル判定をVelopackのものに変更(`TileTerm.portable`マーカーは廃止)、csprojから`AssemblyVersion`/`FileVersion`を削除して版を1か所に
+  - リリース自動化: `scripts/release.ps1`(版の更新・コミット・タグ・push)、`scripts/build_release.ps1`(Velopackでパッケージ作成)、`scripts/release_notes.ps1`(コミット件名からノート生成)、`.github/workflows/release.yml`(タグでReleaseを作る)、`ci.yml`(毎pushでビルドとパッケージ作成)。詳細は「リリース」の節
+  - **ハマった点**: ①`TestVelopackLocator`の3引数コンストラクタの3番目はルートではなく**パッケージのフォルダ**(ルートを渡すと「インストール済みの全体パッケージ」が見つからず、差分ではなく全体をダウンロードする判断になる)②Windows PowerShell 5.1で`2>$null`付きの外部コマンドは`$ErrorActionPreference='Stop'`だと標準エラー出力で終了扱いになる(`Continue`に緩める)③`Get-Content`(既定のエンコーディング)でUTF-8のJSONを表示すると文字化けして見えるが、ファイル自体はUTF-8で正しい④Pythonで文字列を作る時、パスの`\b`や`\t`が制御文字に化ける(生文字列を使うか、ツールで直接編集する)
+  - 確認済み(ローカル): インストーラの静かなインストール→起動→アンインストール(ショートカット・登録情報が消える、`%AppData%`が残る)、新しいSetup.exeの上書きによる更新、ポータブルの起動とデータが`data`(`current`の外)に作られること、0.1.1→0.1.2の差分パッケージ(約0.2MB)の生成と、Velopackの更新チェック→ダウンロードで差分から全体が復元されること
 
 ## 未実装（コンセプト自体には含まれない、品質・UX向上の候補）
 

@@ -1,6 +1,7 @@
 name: CI
 
-# Builds on every push and pull request, so a broken build is noticed before a release is attempted.
+# Builds and packages on every push and pull request, so a broken build or a broken packaging step is noticed
+# long before a release is attempted. Nothing is published from here (see release.yml).
 on:
   push:
     branches: [master]
@@ -11,6 +12,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the release-notes step reads the tag history
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -18,3 +21,14 @@ jobs:
 
       - name: Build
         run: dotnet build TileTerm.sln -c Release
+
+      - name: Package (installer, portable zip, update feed)
+        shell: pwsh
+        run: ./scripts/build_release.ps1 -SkipDeltaBase
+
+      - name: Keep the packages for a few days
+        uses: actions/upload-artifact@v4
+        with:
+          name: TileTerm-packages
+          path: artifacts/release/
+          retention-days: 3

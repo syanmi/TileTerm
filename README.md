@@ -38,8 +38,11 @@ needed.
 
 | Kind | File | Use it when |
 |---|---|---|
-| Installer | `TileTerm-vX.Y.Z-win-x64-setup.exe` | You want a normal install: Start menu entry, uninstall from Windows Settings. No administrator rights are needed by default. |
-| Portable | `TileTerm-vX.Y.Z-win-x64-portable.zip` | You want to run it without installing. Everything stays in the extracted folder, so deleting it leaves no trace. |
+| Installer | `TileTerm-win-Setup.exe` | You want a normal install. One click, for the current user only: no administrator rights, installed under `%LOCALAPPDATA%\TileTerm`, with Start menu and desktop shortcuts. Uninstall from Windows Settings → Apps. |
+| Portable | `TileTerm-win-Portable.zip` | You want to run it without installing. Unzip anywhere and run `TileTerm.exe`; everything stays in that folder, so deleting it leaves no trace. |
+
+The latest installer is always at
+`https://github.com/syanmi/TileTerm/releases/latest/download/TileTerm-win-Setup.exe`.
 
 **Requirements**: 64-bit Windows 10 version 1809 (build 17763) or later.
 
@@ -48,15 +51,21 @@ your PC". Choose *More info* → *Run anyway*. To check that a download is intac
 `SHA256SUMS.txt` attached to each release:
 
 ```powershell
-Get-FileHash .\TileTerm-vX.Y.Z-win-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\TileTerm-win-Setup.exe -Algorithm SHA256
 ```
+
+### Updating
+
+Automatic updates are planned. The releases already contain the update packages and feed that the built-in
+updater will use. Until then, update by running the new `TileTerm-win-Setup.exe`, which upgrades the existing
+installation in place, or by replacing the portable folder's contents (keep its `data` folder).
 
 ### Where settings are stored
 
 | Kind | Location |
 |---|---|
 | Installer | `%AppData%\TileTerm` (`profiles.json` and `settings.json`). It is kept when you uninstall, so a reinstall picks up your settings. |
-| Portable | The `data` folder next to the executable. This happens because the zip contains an empty `TileTerm.portable` file; delete that file to use `%AppData%\TileTerm` instead. |
+| Portable | The `data` folder next to `TileTerm.exe`. It sits outside the folder that updates replace, so it survives updates. |
 
 ## Getting started
 
@@ -82,8 +91,9 @@ dotnet build TileTerm.sln -c Debug
 scripts\build_and_run.bat        # build and launch
 ```
 
-The release packages (portable zip and installer) are built by `scripts\build_release.ps1`; the installer needs
-[Inno Setup](https://jrsoftware.org/isinfo.php) 6.3 or later. The release procedure is described in the
+The release packages (installer, portable zip and the update feed) are built with
+[Velopack](https://velopack.io) by `scripts\build_release.ps1` (it needs `dotnet tool restore` once, which installs
+the pinned `vpk` tool). Releases are made by `scripts\release.ps1`; the whole procedure is described in the
 "リリース" (Release) section of [CLAUDE.md](CLAUDE.md), which is written in Japanese.
 
 ## License

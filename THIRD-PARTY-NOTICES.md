@@ -1,8 +1,8 @@
 # Third-party notices
 
 TileTerm itself is released under the [MIT License](LICENSE). It is built on the components below,
-each distributed under the license shown. The release builds (portable zip and installer) bundle the
-.NET runtime, so it is listed here too.
+each distributed under the license shown. The release builds (installer and portable zip) bundle the
+.NET runtime, and Velopack's own `Update.exe` (part of Velopack, MIT), so those are listed here too.
 
 ## NuGet packages
 
@@ -10,6 +10,7 @@ each distributed under the license shown. The release builds (portable zip and i
 |---|---|---|---|
 | Porta.Pty (pseudo-console / ConPTY host) | 1.0.7 | MIT, Copyright (c) Tom Laird-McConnell | https://github.com/tomlm/Porta.Pty |
 | XTerm.NET (terminal emulation engine) | 1.2.0 | MIT, Copyright (c) Tom Laird-McConnell | https://github.com/tomlm/XTerm.NET |
+| Velopack (installer, portable package and auto-update) | 1.2.0 | MIT, Copyright (c) Velopack Ltd. | https://github.com/velopack/velopack |
 
 ## .NET runtime (bundled in the self-contained release builds)
 

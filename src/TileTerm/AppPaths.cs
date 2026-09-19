@@ -1,22 +1,22 @@
 using System;
 using System.IO;
+using Velopack.Locators;
 
 namespace TileTerm;
 
 /// <summary>
 /// Where the app keeps its user data (profiles.json, settings.json).
 ///
-/// Normally that is <c>%AppData%\TileTerm</c>. A portable copy — the zip build — carries an empty
-/// marker file, <see cref="PortableMarkerFileName"/>, next to the exe; when it is there the data
-/// lives in a <c>data</c> folder beside the exe instead, so the whole app can be carried on a USB
-/// stick or deleted without leaving anything behind. If that folder cannot be written to (say the
-/// zip was unpacked under Program Files), it silently falls back to the normal location.
+/// Normally that is <c>%AppData%\TileTerm</c> — for the installed app and for a build run from an IDE.
+/// The portable package (the Velopack "Portable" zip) is different: it is meant to leave nothing
+/// behind, so its data lives in a <c>data</c> folder next to the package's root. That folder must be
+/// the package root and not the folder the exe runs from: an update replaces the app's <c>current</c>
+/// folder wholesale, which would delete data stored inside it. If the folder cannot be written to
+/// (the zip was unpacked under Program Files, say), it falls back to the normal location.
 /// </summary>
 internal static class AppPaths
 {
-    public const string PortableMarkerFileName = "TileTerm.portable";
-
-    /// <summary>True when the data folder is the one next to the exe.</summary>
+    /// <summary>True when the data folder is the portable one.</summary>
     public static bool IsPortable { get; }
 
     /// <summary>The folder holding the app's data files. It exists once this is read.</summary>
@@ -24,14 +24,9 @@ internal static class AppPaths
 
     static AppPaths()
     {
-        var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TileTerm");
-
-        // ProcessPath rather than AppContext.BaseDirectory: for a single-file build it is the exe
-        // itself, so the marker is looked for where the user actually put the file.
-        var exeDirectory = Path.GetDirectoryName(Environment.ProcessPath);
-        if (exeDirectory is not null && File.Exists(Path.Combine(exeDirectory, PortableMarkerFileName)))
+        if (VelopackLocator.IsCurrentSet && VelopackLocator.Current is { IsPortable: true, RootAppDir: { Length: > 0 } root })
         {
-            var portable = Path.Combine(exeDirectory, "data");
+            var portable = Path.Combine(root, "data");
             if (TryUse(portable))
             {
                 IsPortable = true;
@@ -40,6 +35,7 @@ internal static class AppPaths
             }
         }
 
+        var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TileTerm");
         Directory.CreateDirectory(appData);
         DataDirectory = appData;
     }
