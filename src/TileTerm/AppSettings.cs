@@ -6,20 +6,27 @@ using System.Text.Json.Serialization;
 namespace TileTerm;
 
 /// <summary>
-/// App-wide preferences that aren't tied to a profile (today: just the theme), kept in
-/// <c>settings.json</c> next to <c>profiles.json</c> (see <see cref="AppPaths"/>). A missing or
-/// unreadable file simply means "defaults" — the theme falls back to Dark.
+/// App-wide preferences that aren't tied to a profile, kept in <c>settings.json</c> next to
+/// <c>profiles.json</c> (see <see cref="AppPaths"/>). A missing or unreadable file simply means
+/// "defaults": the Dark theme, and update checks on.
 /// </summary>
 internal sealed class AppSettings
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
+    /// <summary>The one loaded copy, shared by everything that reads or changes a setting.</summary>
+    public static AppSettings Current { get; } = Load();
+
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public ThemeKind Theme { get; set; } = ThemeKind.Dark;
 
+    /// <summary>Look for a new version on GitHub when the app starts (see <see cref="UpdateService"/>).
+    /// On by default; the user can turn it off in the settings.</summary>
+    public bool CheckForUpdates { get; set; } = true;
+
     private static string FilePath => Path.Combine(AppPaths.DataDirectory, "settings.json");
 
-    public static AppSettings Load()
+    private static AppSettings Load()
     {
         try
         {
@@ -42,7 +49,7 @@ internal sealed class AppSettings
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // The theme still applies for this session; it just won't be remembered.
+            // The setting still applies for this session; it just won't be remembered.
         }
     }
 }

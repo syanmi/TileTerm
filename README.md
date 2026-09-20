@@ -56,9 +56,16 @@ Get-FileHash .\TileTerm-win-Setup.exe -Algorithm SHA256
 
 ### Updating
 
-Automatic updates are planned. The releases already contain the update packages and feed that the built-in
-updater will use. Until then, update by running the new `TileTerm-win-Setup.exe`, which upgrades the existing
-installation in place, or by replacing the portable folder's contents (keep its `data` folder).
+TileTerm checks GitHub for a newer release each time it starts and downloads it in the background. When one is
+ready, an **↑ vX.Y.Z に更新** button appears in the title bar; click it, confirm, and TileTerm restarts into the new
+version. Nothing is applied without your confirmation, because restarting closes the open tiles.
+
+Both the installer and the portable build update this way, and your settings are kept. Automatic checks can be
+turned off (and a check run on demand) under **Settings → アップデート**. A build that was not installed by
+TileTerm's installer or unzipped from the portable zip (for example one built from source) never updates itself.
+
+You can also update by hand: run the new `TileTerm-win-Setup.exe`, which upgrades the existing installation in
+place, or replace the portable folder's contents (keep its `data` folder).
 
 ### Where settings are stored
 

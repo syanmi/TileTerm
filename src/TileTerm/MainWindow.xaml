@@ -105,9 +105,14 @@
             <StackPanel x:Name="FavoritesPanel" Grid.Column="7" Orientation="Horizontal"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True" />
 
-            <TextBlock x:Name="VersionText" Grid.Column="8" Foreground="{DynamicResource Theme.FgMuted}" FontSize="11"
-                       HorizontalAlignment="Right" VerticalAlignment="Center" Margin="10,0,10,0"
-                       IsHitTestVisible="False" />
+            <StackPanel Grid.Column="8" Orientation="Horizontal" HorizontalAlignment="Right">
+                <!-- Shown only while a downloaded update is waiting to be applied (see UpdateService). -->
+                <Button x:Name="UpdateButton" Style="{StaticResource TitleBarButton}" Visibility="Collapsed"
+                        AutomationProperties.Name="更新を適用"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True" />
+                <TextBlock x:Name="VersionText" Foreground="{DynamicResource Theme.FgMuted}" FontSize="11"
+                           VerticalAlignment="Center" Margin="10,0,10,0" IsHitTestVisible="False" />
+            </StackPanel>
 
             <Button x:Name="MinimizeButton" Grid.Column="9" Style="{StaticResource WindowControlButton}"
                     ToolTip="最小化" AutomationProperties.Name="最小化" shell:WindowChrome.IsHitTestVisibleInChrome="True" />

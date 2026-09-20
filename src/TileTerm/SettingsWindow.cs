@@ -12,15 +12,16 @@ using Rectangle = System.Windows.Shapes.Rectangle;
 namespace TileTerm;
 
 /// <summary>
-/// The app's settings dialog. Has a category sidebar on the left with two
-/// categories today — "プロンプト" and "テーマ" — and the matching page on the right.
+/// The app's settings dialog. Has a category sidebar on the left with three
+/// categories today — "プロンプト", "テーマ" and "アップデート" — and the matching page on the right.
 /// "プロンプト" is the profile list + editor: add/edit/remove
 /// profiles, pick which one is the 既定 (default), and mark any number of
 /// them as お気に入り (favorites), backed by <see cref="ProfileStore"/>, which
 /// persists to <c>%AppData%\TileTerm\profiles.json</c>. "テーマ" picks the
 /// dark/light theme (see <see cref="ThemeManager"/>, persisted to <c>settings.json</c>);
 /// like the profile edits it takes effect on 適用/OK, and the whole app — this dialog
-/// included — re-colors on the spot.
+/// included — re-colors on the spot. "アップデート" holds the on/off switch for the startup update
+/// check (see <see cref="UpdateService"/>), applied the same way, and a "今すぐ確認" button.
 ///
 /// Modeled on the JetBrains (CLion) settings dialog: a flush category list |
 /// list-with-toolbar | form, with draggable splitters between them; form rows put
@@ -64,6 +65,11 @@ public sealed class SettingsWindow : Window
     private Grid _promptBody = null!;
     private StackPanel _themePanel = null!;
     private ThemeKind _pendingTheme = ThemeManager.Current;
+    private StackPanel _updatePanel = null!;
+    private readonly CheckBox _checkUpdatesBox = Theme.CheckBox("起動時に更新を確認する");
+    private readonly Button _checkNowButton = Theme.Button("今すぐ確認");
+    private readonly TextBlock _updateStatus = Theme.Hint("");
+    private bool _pendingCheckUpdates = AppSettings.Current.CheckForUpdates;
     private string _iconPath = "";
     private ProfileDefinition? _editing;
     private bool _suppressToggleEvents;
@@ -128,6 +134,7 @@ public sealed class SettingsWindow : Window
         categoryList.Background = Theme.BgSidebar;
         categoryList.Items.Add("プロンプト");
         categoryList.Items.Add("テーマ");
+        categoryList.Items.Add("アップデート");
         categoryList.SelectionChanged += (_, _) => ShowCategory(categoryList.SelectedIndex);
         Grid.SetColumn(categoryList, 0);
         main.Children.Add(categoryList);
@@ -152,6 +159,10 @@ public sealed class SettingsWindow : Window
         Grid.SetRow(_themePanel, 1);
         rightSide.Children.Add(_themePanel);
 
+        _updatePanel = BuildUpdatePanel();
+        Grid.SetRow(_updatePanel, 1);
+        rightSide.Children.Add(_updatePanel);
+
         Grid.SetColumn(rightSide, 2);
         main.Children.Add(rightSide);
 
@@ -162,10 +173,66 @@ public sealed class SettingsWindow : Window
 
     private void ShowCategory(int index)
     {
-        bool themePage = index == 1;
-        _headerText.Text = themePage ? "テーマ" : "プロンプト";
-        _promptBody.Visibility = themePage ? Visibility.Collapsed : Visibility.Visible;
-        _themePanel.Visibility = themePage ? Visibility.Visible : Visibility.Collapsed;
+        _headerText.Text = index switch { 1 => "テーマ", 2 => "アップデート", _ => "プロンプト" };
+        _promptBody.Visibility = index == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _themePanel.Visibility = index == 1 ? Visibility.Visible : Visibility.Collapsed;
+        _updatePanel.Visibility = index == 2 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>The "アップデート" page: the switch for the check at startup (pending until 適用/OK, like
+    /// the other pages) and a button that checks right now and says what happened.</summary>
+    private StackPanel BuildUpdatePanel()
+    {
+        var updates = UpdateService.Instance;
+
+        _checkUpdatesBox.IsChecked = _pendingCheckUpdates;
+        _checkUpdatesBox.Checked += (_, _) => SetPendingCheckUpdates(true);
+        _checkUpdatesBox.Unchecked += (_, _) => SetPendingCheckUpdates(false);
+
+        _checkNowButton.MinWidth = 96;
+        _checkNowButton.HorizontalAlignment = HorizontalAlignment.Left;
+        _checkNowButton.Click += async (_, _) => await CheckForUpdatesNowAsync();
+        _updateStatus.Margin = new Thickness(0, 8, 0, 0);
+
+        if (!updates.IsInstalled)
+        {
+            _checkNowButton.IsEnabled = false;
+            _updateStatus.Text = "この起動はインストール版ではないため(開発中のビルドなど)、自動更新は使えません。";
+        }
+
+        var panel = new StackPanel { Margin = new Thickness(16, 0, 16, 14), Visibility = Visibility.Collapsed };
+        panel.Children.Add(Theme.Label($"現在のバージョン: v{updates.CurrentVersion}"));
+        _checkUpdatesBox.Margin = new Thickness(0, 12, 0, 0);
+        panel.Children.Add(_checkUpdatesBox);
+        var hint = Theme.Hint("新しいバージョンがあれば自動でダウンロードします。適用はタイトルバーの「更新」ボタンから行います。");
+        hint.Margin = new Thickness(20, 3, 0, 0);
+        panel.Children.Add(hint);
+        _checkNowButton.Margin = new Thickness(0, 14, 0, 0);
+        panel.Children.Add(_checkNowButton);
+        panel.Children.Add(_updateStatus);
+        return panel;
+    }
+
+    private void SetPendingCheckUpdates(bool value)
+    {
+        _pendingCheckUpdates = value;
+        UpdateApplyState();
+    }
+
+    private async Task CheckForUpdatesNowAsync()
+    {
+        _checkNowButton.IsEnabled = false;
+        _updateStatus.Text = "確認しています...";
+
+        var result = await UpdateService.Instance.CheckAndDownloadAsync();
+        _updateStatus.Text = result.Outcome switch
+        {
+            UpdateOutcome.UpToDate => "最新のバージョンです。",
+            UpdateOutcome.Downloaded => $"v{result.Version} をダウンロードしました。タイトルバーの「更新」から再起動して適用できます。",
+            UpdateOutcome.NotInstalled => "この起動はインストール版ではないため、自動更新は使えません。",
+            _ => $"確認できませんでした: {result.Error}",
+        };
+        _checkNowButton.IsEnabled = UpdateService.Instance.IsInstalled;
     }
 
     /// <summary>The "テーマ" page: two preview cards (each a miniature of the app in that theme),
@@ -567,10 +634,11 @@ public sealed class SettingsWindow : Window
 
     private bool ProfileDirty => _editing is not null && CurrentFields() != _loadedFields;
     private bool ThemeDirty => _pendingTheme != ThemeManager.Current;
+    private bool UpdateSettingDirty => _pendingCheckUpdates != AppSettings.Current.CheckForUpdates;
 
     /// <summary>適用 is only meaningful while something differs from what is currently in effect:
     /// the profile form vs. what was loaded into it, or the chosen theme vs. the active one.</summary>
-    private void UpdateApplyState() => _applyButton.IsEnabled = ProfileDirty || ThemeDirty;
+    private void UpdateApplyState() => _applyButton.IsEnabled = ProfileDirty || ThemeDirty || UpdateSettingDirty;
 
     private void LoadSelected()
     {
@@ -604,6 +672,11 @@ public sealed class SettingsWindow : Window
     private void ApplyEdits()
     {
         if (ThemeDirty) ThemeManager.Set(_pendingTheme);
+        if (UpdateSettingDirty)
+        {
+            AppSettings.Current.CheckForUpdates = _pendingCheckUpdates;
+            AppSettings.Current.Save();
+        }
         if (ProfileDirty) ApplyProfileEdits();
         UpdateApplyState();
     }

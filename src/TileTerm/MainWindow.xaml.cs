@@ -19,6 +19,7 @@ public partial class MainWindow : Window
 {
     private readonly ProfileStore _profileStore = new();
     private PaneManager? _paneManager;
+    private bool _applyingUpdate;
 
     public MainWindow()
     {
@@ -67,6 +68,10 @@ public partial class MainWindow : Window
             else SystemCommands.MaximizeWindow(this);
         };
         CloseWindowButton.Click += (_, _) => Close();
+
+        UpdateButton.Click += (_, _) => ApplyUpdate();
+        UpdateService.Instance.PendingChanged += RefreshUpdateButton;
+        Closed += (_, _) => UpdateService.Instance.PendingChanged -= RefreshUpdateButton;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -76,6 +81,65 @@ public partial class MainWindow : Window
         _paneManager = new PaneManager(PaneHost, initial);
         _paneManager.LastPaneCloseRequested += () => Close();
         RebuildFavoritesBar();
+
+        RefreshUpdateButton();   // a version downloaded in an earlier run may still be waiting
+        _ = CheckForUpdatesAtStartupAsync();
+    }
+
+    /// <summary>Looks for a new version in the background and downloads it; the title bar then offers
+    /// "更新". A failure here (offline, ...) is deliberately silent: it is not worth interrupting a
+    /// terminal session for, and the settings page has a "今すぐ確認" button that reports the reason.</summary>
+    private static async Task CheckForUpdatesAtStartupAsync()
+    {
+        var updates = UpdateService.Instance;
+        if (!AppSettings.Current.CheckForUpdates || !updates.IsInstalled) return;
+        await updates.CheckAndDownloadAsync();
+    }
+
+    /// <summary>Shows the title bar's "更新" button while a downloaded update is waiting to be applied.</summary>
+    private void RefreshUpdateButton()
+    {
+        var version = UpdateService.Instance.PendingVersion;
+        if (version is null)
+        {
+            UpdateButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        UpdateButton.Content = new TextBlock
+        {
+            Text = $"↑ v{version} に更新", FontSize = 12, Foreground = Theme.Accent, VerticalAlignment = VerticalAlignment.Center,
+        };
+        UpdateButton.ToolTip = $"新しいバージョン v{version} をダウンロード済みです。クリックすると、確認のうえ再起動して更新します";
+        UpdateButton.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Asks, then restarts into the downloaded version. The app is closed the normal way (so every
+    /// session is shut down) and the updater — already started, waiting for this process to end — installs
+    /// the new version and launches it.</summary>
+    private void ApplyUpdate()
+    {
+        var version = UpdateService.Instance.PendingVersion;
+        if (version is null) return;
+
+        var answer = MessageDialog.Show(
+            this,
+            $"TileTerm v{version} をダウンロードしました。\n今すぐ再起動して更新しますか？\n\n開いているタイルはすべて閉じられます(分割の配置は保存されません)。",
+            "TileTerm - 更新", MessageBoxButton.OKCancel);
+        if (answer != MessageBoxResult.OK) return;
+
+        try
+        {
+            UpdateService.Instance.ApplyAfterExitAndRestart();
+        }
+        catch (Exception ex)
+        {
+            MessageDialog.Show(this, $"更新を開始できませんでした:\n{ex.Message}", "TileTerm - 更新");
+            return;
+        }
+
+        _applyingUpdate = true;   // OnClosing must not ask "close all tiles?" again
+        Close();
     }
 
     private void SplitWithDefault(SplitDirection direction)
@@ -151,13 +215,17 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
-        var result = MessageDialog.Show(
-            this, "開いているすべてのタイルを閉じます。よろしいですか？", "TileTerm", MessageBoxButton.OKCancel);
-
-        if (result != MessageBoxResult.OK)
+        // Applying an update already asked (see ApplyUpdate), so it closes without the second question.
+        if (!_applyingUpdate)
         {
-            e.Cancel = true;
-            return;
+            var result = MessageDialog.Show(
+                this, "開いているすべてのタイルを閉じます。よろしいですか？", "TileTerm", MessageBoxButton.OKCancel);
+
+            if (result != MessageBoxResult.OK)
+            {
+                e.Cancel = true;
+                return;
+            }
         }
 
         _paneManager?.ShutdownAll();

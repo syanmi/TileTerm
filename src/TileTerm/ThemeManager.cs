@@ -11,8 +11,6 @@ namespace TileTerm;
 /// </summary>
 internal static class ThemeManager
 {
-    private static AppSettings _settings = new();
-
     public static ThemePalette Palette { get; private set; } = ThemePalette.Dark;
     public static ThemeKind Current => Palette.Mode;
 
@@ -24,9 +22,8 @@ internal static class ThemeManager
     /// and applies the saved theme.</summary>
     public static void Initialize(Application app)
     {
-        _settings = AppSettings.Load();
         Theme.RegisterResources(app.Resources);
-        Palette = ThemePalette.For(_settings.Theme);
+        Palette = ThemePalette.For(AppSettings.Current.Theme);
         Theme.ApplyPalette(Palette);
     }
 
@@ -37,8 +34,8 @@ internal static class ThemeManager
         Palette = ThemePalette.For(mode);
         Theme.ApplyPalette(Palette);
 
-        _settings.Theme = mode;
-        _settings.Save();
+        AppSettings.Current.Theme = mode;
+        AppSettings.Current.Save();
 
         Changed?.Invoke();
     }
