@@ -8,7 +8,7 @@
     <UseWPF>true</UseWPF>
     <Product>TileTerm</Product>
     <!-- The one place the version lives. AssemblyVersion and FileVersion are derived from it by the SDK. -->
-    <Version>0.1.2</Version>
+    <Version>0.1.3</Version>
     <ApplicationIcon>Assets\TileTerm.ico</ApplicationIcon>
     <!-- Program.Main (not the XAML-generated one) starts the app: Velopack must run first, see Program.cs. -->
     <StartupObject>TileTerm.Program</StartupObject>
