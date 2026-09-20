@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Automation;
@@ -46,6 +47,8 @@ public sealed class TerminalPaneControl : Grid
     private readonly Border _activeBorder;
     private readonly Border _dropZoneOverlay;
     private readonly TextBox _imeBox;
+    private readonly TerminalScrollBar _scrollBar = new();
+    private double _wheelNotches;
     private Point? _dragStartPoint;
     private bool _composing;
 
@@ -103,8 +106,12 @@ public sealed class TerminalPaneControl : Grid
         // A real TextBox gets both (inline composition, candidate window at its caret) for free.
         _imeBox = BuildImeBox();
         var terminalArea = new Grid();
+        terminalArea.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        terminalArea.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         terminalArea.Children.Add(_canvas);
         terminalArea.Children.Add(_imeBox);
+        SetColumn(_scrollBar, 1);
+        terminalArea.Children.Add(_scrollBar);
         Grid.SetRow(terminalArea, 1);
         content.Children.Add(terminalArea);
 
@@ -143,6 +150,19 @@ public sealed class TerminalPaneControl : Grid
         _canvas.SizeInCellsChanged += (cols, rows) => Session?.Resize(cols, rows);
         _canvas.CursorMoved += rect => Dispatcher.BeginInvoke(() => PlaceImeBox(rect));
         _canvas.PreviewMouseDown += (_, _) => _imeBox.Focus();
+        _canvas.MouseRightButtonUp += (_, e) =>
+        {
+            // Like the Windows console: right-click copies the selection, or pastes when nothing is selected.
+            if (_canvas.HasSelection) CopySelection();
+            else Paste();
+            e.Handled = true;
+        };
+        _canvas.ViewChanged += (max, value, rows) => Dispatcher.BeginInvoke(() => _scrollBar.Update(max, value, rows));
+        _scrollBar.PreviewMouseDown += (_, _) => _imeBox.Focus();
+        _scrollBar.Scrolled += line => _canvas.ScrollToLine(line);
+        _scrollBar.PageRequested += direction =>
+            _canvas.ScrollLines(direction * Math.Max(1, (Session?.Terminal.Rows ?? 1) - 1));
+        terminalArea.MouseWheel += OnTerminalMouseWheel;
 
         AllowDrop = true;
         DragOver += OnDragOver;
@@ -161,7 +181,7 @@ public sealed class TerminalPaneControl : Grid
             MinWidth = 2,
             MinHeight = 0,
             Padding = new Thickness(0),
-            BorderThickness = new Thickness(0, 0, 0, 1),
+            BorderThickness = new Thickness(0),
             BorderBrush = Brushes.Transparent,
             Background = Brushes.Transparent,
             Foreground = Brushes.Transparent,
@@ -197,6 +217,9 @@ public sealed class TerminalPaneControl : Grid
         _imeBox.Foreground = hasText ? Theme.TerminalFg : Brushes.Transparent;
         _imeBox.Background = hasText ? Theme.TerminalBg : Brushes.Transparent;
         _imeBox.BorderBrush = hasText ? Theme.TerminalFg : Brushes.Transparent;
+        // The theme's TextBox template paints a focused box's border in the accent color whatever the
+        // brush above says; with no thickness there is nothing to paint while the box is idle.
+        _imeBox.BorderThickness = hasText ? new Thickness(0, 0, 0, 1) : new Thickness(0);
 
         if (hasText && !_composing)
             Dispatcher.BeginInvoke(() => { if (!_composing) _imeBox.Clear(); });
@@ -437,6 +460,9 @@ public sealed class TerminalPaneControl : Grid
         var terminal = Session?.Terminal;
         if (terminal is null) return;
 
+        if (TryHandleClipboardKey(e)) return;
+        if (TryHandleScrollKey(e, terminal)) return;
+
         var modifiers = TerminalCanvas.MapModifiers(Keyboard.Modifiers);
 
         // Ctrl+letter (e.g. Ctrl+C) is not a TextInput event, so it has to be
@@ -460,6 +486,186 @@ public sealed class TerminalPaneControl : Grid
     private void Send(string sequence)
     {
         if (string.IsNullOrEmpty(sequence)) return;
+
+        // Typing (or pasting) while looking at older output jumps back to the live end, like the
+        // Windows console and Windows Terminal do.
+        if (!_canvas.IsAtBottom) _canvas.ScrollToBottom();
+        if (_canvas.HasSelection) _canvas.ClearSelection();
+
         _ = Session?.SendTextAsync(sequence);
+    }
+
+    /// <summary>Copy and paste shortcuts. Ctrl+C copies only while text is selected — with nothing selected
+    /// it is still the interrupt key and goes to the program — and Ctrl+Shift+C / Ctrl+Insert always
+    /// mean "copy". Ctrl+V, Ctrl+Shift+V and Shift+Insert paste.</summary>
+    private bool TryHandleClipboardKey(KeyEventArgs e)
+    {
+        var modifiers = Keyboard.Modifiers;
+        bool ctrl = modifiers == ModifierKeys.Control;
+        bool ctrlShift = modifiers == (ModifierKeys.Control | ModifierKeys.Shift);
+
+        bool copy = (ctrl && e.Key == Key.C && _canvas.HasSelection)
+            || (ctrlShift && e.Key == Key.C)
+            || (ctrl && e.Key == Key.Insert);
+        bool paste = ((ctrl || ctrlShift) && e.Key == Key.V)
+            || (modifiers == ModifierKeys.Shift && e.Key == Key.Insert);
+        if (!copy && !paste) return false;
+
+        if (copy) CopySelection();
+        else Paste();
+        e.Handled = true;
+        return true;
+    }
+
+    private void CopySelection()
+    {
+        string text = _canvas.GetSelectedText();
+        if (text.Length == 0) return;
+
+        if (TrySetClipboard(text))
+            _canvas.ClearSelection();
+    }
+
+    /// <summary>Sends the clipboard's text to the program as if it had been typed. Line breaks become
+    /// Enter, other control characters are dropped (a stray Esc or Ctrl+C in copied text should not act
+    /// as a command), and a program that asked for bracketed paste gets the text wrapped in the markers
+    /// that tell it "this is a paste" (shells use them so a pasted line is not run before you press Enter).</summary>
+    private void Paste()
+    {
+        var terminal = Session?.Terminal;
+        if (terminal is null) return;
+
+        string? text = TryGetClipboardText();
+        if (string.IsNullOrEmpty(text)) return;
+
+        var sb = new StringBuilder(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '\r')
+            {
+                sb.Append('\r');
+                if (i + 1 < text.Length && text[i + 1] == '\n') i++;
+            }
+            else if (c == '\n') sb.Append('\r');
+            else if (c == '\t' || (c >= ' ' && c != '\u007f')) sb.Append(c);
+        }
+        if (sb.Length == 0) return;
+
+        if (terminal.BracketedPasteMode)
+            Send("\u001b[200~" + sb + "\u001b[201~");
+        else
+            Send(sb.ToString());
+    }
+
+    // Another program can hold the clipboard open for a moment; that surfaces as an ExternalException.
+    private static string? TryGetClipboardText()
+    {
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                return Clipboard.ContainsText() ? Clipboard.GetText() : null;
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                System.Threading.Thread.Sleep(20);
+            }
+        }
+        return null;
+    }
+
+    private static bool TrySetClipboard(string text)
+    {
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                Clipboard.SetText(text);
+                return true;
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                System.Threading.Thread.Sleep(20);
+            }
+        }
+        return false;
+    }
+
+    /// <summary>The keyboard side of scrolling back through output (only while the normal screen is shown;
+    /// a full-screen app owns its own scrolling): Shift+PageUp/PageDown a page at a time, Ctrl+Shift+Up/Down
+    /// a line at a time, Ctrl+Shift+Home/End to the very top/bottom — Windows Terminal's shortcuts. Keys
+    /// with Shift/Ctrl+Shift are otherwise unused by shells, so nothing a program relies on is taken.</summary>
+    private bool TryHandleScrollKey(KeyEventArgs e, XTerm.Terminal terminal)
+    {
+        if (terminal.IsAlternateBufferActive) return false;
+
+        var modifiers = Keyboard.Modifiers;
+        int page = Math.Max(1, terminal.Rows - 1);
+
+        if (modifiers == ModifierKeys.Shift)
+        {
+            switch (e.Key)
+            {
+                case Key.PageUp: _canvas.ScrollLines(-page); e.Handled = true; return true;
+                case Key.PageDown: _canvas.ScrollLines(page); e.Handled = true; return true;
+            }
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            switch (e.Key)
+            {
+                case Key.Up: _canvas.ScrollLines(-1); e.Handled = true; return true;
+                case Key.Down: _canvas.ScrollLines(1); e.Handled = true; return true;
+                case Key.Home: _canvas.ScrollToTop(); e.Handled = true; return true;
+                case Key.End: _canvas.ScrollToBottom(); e.Handled = true; return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Mouse wheel over the tile. Depending on what the program in the tile has asked for, the
+    /// wheel scrolls our own history (an ordinary shell), is passed to the program as mouse-wheel events
+    /// (it enabled mouse reporting — holding Shift overrides that, as in other terminals), or becomes
+    /// Up/Down keys (a full-screen program that did not ask for the mouse, like less).</summary>
+    private void OnTerminalMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        var terminal = Session?.Terminal;
+        if (terminal is null) return;
+        e.Handled = true;
+
+        // Touchpads report many small deltas; count whole wheel notches and keep the remainder.
+        _wheelNotches += e.Delta / 120.0;
+        int notches = (int)_wheelNotches;
+        if (notches == 0) return;
+        _wheelNotches -= notches;
+
+        bool towardsOlder = notches > 0;
+        int count = Math.Abs(notches);
+
+        if (terminal.MouseTrackingMode != XTerm.Input.MouseTrackingMode.None && (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
+        {
+            var (col, row) = _canvas.CellAt(e.GetPosition(_canvas));
+            var button = towardsOlder ? XTerm.Input.MouseButton.WheelUp : XTerm.Input.MouseButton.WheelDown;
+            var type = towardsOlder ? XTerm.Input.MouseEventType.WheelUp : XTerm.Input.MouseEventType.WheelDown;
+            var modifiers = TerminalCanvas.MapModifiers(Keyboard.Modifiers);
+            for (int i = 0; i < count; i++)
+                _ = Session?.SendTextAsync(terminal.GenerateMouseEvent(button, col, row, type, modifiers));
+            return;
+        }
+
+        // The system setting is lines per notch; -1 means "one screen per notch".
+        int linesPerNotch = SystemParameters.WheelScrollLines > 0 ? SystemParameters.WheelScrollLines : terminal.Rows;
+        int lines = count * linesPerNotch;
+
+        if (terminal.IsAlternateBufferActive)
+        {
+            var arrow = terminal.GenerateKeyInput(towardsOlder ? XTerm.Input.Key.UpArrow : XTerm.Input.Key.DownArrow,
+                XTerm.Input.KeyModifiers.None);
+            _ = Session?.SendTextAsync(string.Concat(Enumerable.Repeat(arrow, lines)));
+            return;
+        }
+
+        _canvas.ScrollLines(towardsOlder ? -lines : lines);
     }
 }

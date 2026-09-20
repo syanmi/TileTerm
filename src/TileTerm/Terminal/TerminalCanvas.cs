@@ -1,9 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using XTerm.Common;
+using XTerm.Selection;
 using XTermKey = XTerm.Input.Key;
 
 namespace TileTerm.Terminal;
@@ -17,12 +20,28 @@ namespace TileTerm.Terminal;
 public sealed class TerminalCanvas : FrameworkElement
 {
     internal const double FontSize = 14.0;
-    internal static readonly FontFamily Font = new("Consolas");
 
+    /// <summary>Consolas for everything Latin; the rest of the list covers Japanese (which Consolas lacks),
+    /// so wide characters get one consistent font instead of whatever WPF happens to fall back to.</summary>
+    internal static readonly FontFamily Font = new("Consolas, BIZ UDGothic, Yu Gothic, Meiryo, MS Gothic");
+
+    private static readonly Typeface RegularFace = new(Font, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+    private static readonly Typeface BoldFace = new(Font, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+
+    /// <summary>Background of selected cells (a dark blue that keeps every text color readable).</summary>
+    private static readonly Color SelectionColor = Color.FromRgb(0x26, 0x4F, 0x78);
+
+    private readonly Dictionary<Color, SolidColorBrush> _brushes = new();
+    private readonly DispatcherTimer _autoScroll = new() { Interval = TimeSpan.FromMilliseconds(60) };
+    private (int Col, int Row) _anchor;
+    private bool _pressed;        // the left button went down on the terminal and is still held
+    private bool _dragStarted;    // ... and the mouse has since moved off the cell it went down on
     private Rect _lastCursorRect;
+    private (int Max, int Value, int Rows) _lastView = (-1, -1, -1);
 
     private double _cellWidth = 8;
     private double _cellHeight = 16;
+    private double _baseline = 12;
     private double _pixelsPerDip = 1.0;
     private bool _metricsReady;
 
@@ -36,6 +55,10 @@ public sealed class TerminalCanvas : FrameworkElement
     /// input box on it).</summary>
     public event Action<Rect>? CursorMoved;
 
+    /// <summary>Fired after a render in which the scroll position or the amount of history changed:
+    /// (lines of history above the screen, the top visible line, rows on screen). Drives the scroll bar.</summary>
+    public event Action<int, int, int>? ViewChanged;
+
     public TerminalCanvas()
     {
         // Keyboard focus lives in the hosting pane's IME TextBox, not here.
@@ -43,6 +66,8 @@ public sealed class TerminalCanvas : FrameworkElement
         FocusVisualStyle = null;
         ClipToBounds = true;
         SnapsToDevicePixels = true;
+        Cursor = Cursors.IBeam;
+        _autoScroll.Tick += (_, _) => OnAutoScrollTick();
     }
 
     private void EnsureMetrics()
@@ -52,11 +77,13 @@ public sealed class TerminalCanvas : FrameworkElement
         _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         var probe = new FormattedText(
             "M", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-            new Typeface(Font, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
-            FontSize, Brushes.White, _pixelsPerDip);
+            RegularFace, FontSize, Brushes.White, _pixelsPerDip);
 
-        _cellWidth = probe.WidthIncludingTrailingWhitespace;
-        _cellHeight = probe.Height;
+        // Whole pixels, so cell backgrounds and block characters of neighbouring cells meet exactly
+        // instead of leaving hairline seams (a fractional cell width like 7.7px would).
+        _cellWidth = Math.Max(1, Math.Round(probe.WidthIncludingTrailingWhitespace * _pixelsPerDip)) / _pixelsPerDip;
+        _cellHeight = Math.Max(1, Math.Ceiling(probe.Height * _pixelsPerDip - 0.01)) / _pixelsPerDip;
+        _baseline = probe.Baseline;
         _metricsReady = true;
     }
 
@@ -69,11 +96,28 @@ public sealed class TerminalCanvas : FrameworkElement
         return (cols, rows);
     }
 
+    /// <summary>The cell (0-based column and row, clamped to the screen) under a point of this control.</summary>
+    public (int Col, int Row) CellAt(Point point)
+    {
+        var (cols, rows) = MeasureCells(new Size(ActualWidth, ActualHeight));
+        return (Math.Clamp((int)(point.X / _cellWidth), 0, cols - 1), Math.Clamp((int)(point.Y / _cellHeight), 0, rows - 1));
+    }
+
     protected override void OnRenderSizeChanged(SizeChangedInfo info)
     {
         base.OnRenderSizeChanged(info);
         var (cols, rows) = MeasureCells(info.NewSize);
         SizeInCellsChanged?.Invoke(cols, rows);
+    }
+
+    private SolidColorBrush BrushFor(Color color)
+    {
+        if (_brushes.TryGetValue(color, out var brush)) return brush;
+        if (_brushes.Count > 1024) _brushes.Clear();   // 24-bit color output can produce endless variety
+        brush = new SolidColorBrush(color);
+        brush.Freeze();
+        _brushes[color] = brush;
+        return brush;
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -82,19 +126,65 @@ public sealed class TerminalCanvas : FrameworkElement
 
         double width = Math.Max(ActualWidth, 1);
         double height = Math.Max(ActualHeight, 1);
-        dc.DrawRectangle(new SolidColorBrush(AnsiPalette.DefaultBackground), null, new Rect(0, 0, width, height));
+        dc.DrawRectangle(BrushFor(AnsiPalette.DefaultBackground), null, new Rect(0, 0, width, height));
 
         var terminal = Terminal;
-        if (terminal is null) return;
+        if (terminal is null)
+        {
+            RaiseViewChanged(0, 0, 0);
+            return;
+        }
 
+        Rect cursorRect;
+        bool showCursor;
+        (int Max, int Value, int Rows) view;
+
+        // The session's reader thread writes into this buffer while we draw it; both sides take this lock.
+        lock (terminal)
+        {
+            var buffer = terminal.Buffer;
+            DrawCells(dc, terminal);
+
+            cursorRect = new Rect(buffer.X * _cellWidth, buffer.Y * _cellHeight, _cellWidth, _cellHeight);
+            // Scrolled back into history, the cursor's row is not on screen.
+            showCursor = terminal.CursorVisible && buffer.IsAtBottom;
+            view = (buffer.YBase, buffer.YDisp, terminal.Rows);
+        }
+
+        if (cursorRect != _lastCursorRect)
+        {
+            _lastCursorRect = cursorRect;
+            CursorMoved?.Invoke(cursorRect);
+        }
+
+        if (showCursor)
+        {
+            var cursorBrush = BrushFor(TileScheme.TerminalCursor);
+            dc.DrawRectangle(cursorBrush, null, terminal.Options.CursorStyle switch
+            {
+                CursorStyle.Underline => new Rect(cursorRect.X, cursorRect.Y + _cellHeight - 2, _cellWidth, 2),
+                CursorStyle.Bar => new Rect(cursorRect.X, cursorRect.Y, 2, _cellHeight),
+                _ => cursorRect,
+            });
+        }
+
+        RaiseViewChanged(view.Max, view.Value, view.Rows);
+    }
+
+    private void DrawCells(DrawingContext dc, XTerm.Terminal terminal)
+    {
         var buffer = terminal.Buffer;
+        var selection = terminal.Selection.HasSelection ? terminal.Selection : null;
 
         for (int row = 0; row < terminal.Rows; row++)
         {
-            var line = buffer.Lines[buffer.YDisp + row];
+            int index = buffer.YDisp + row;
+            if (index < 0 || index >= buffer.Lines.Length) continue;
+            var line = buffer.Lines[index];
             if (line is null) continue;
 
-            for (int col = 0; col < terminal.Cols; col++)
+            int cols = Math.Min(terminal.Cols, line.Length);
+            for (int col = 0; col < cols; col++)
             {
                 var cell = line[col];
                 if (cell.Width == 0) continue; // second half of a wide (CJK) character
@@ -104,49 +194,189 @@ public sealed class TerminalCanvas : FrameworkElement
                 var bg = AnsiPalette.Resolve(attrs.GetBgColor(), attrs.GetBgColorMode(), AnsiPalette.DefaultBackground);
                 if (attrs.IsInverse())
                     (fg, bg) = (bg, fg);
+                if (selection is not null && selection.IsCellSelected(col, row))
+                    bg = SelectionColor;
 
-                double x = col * _cellWidth;
-                double y = row * _cellHeight;
+                int span = Math.Max(cell.Width, 1);
+                var cellRect = new Rect(col * _cellWidth, row * _cellHeight, span * _cellWidth, _cellHeight);
 
                 if (bg != AnsiPalette.DefaultBackground)
-                    dc.DrawRectangle(new SolidColorBrush(bg), null, new Rect(x, y, _cellWidth, _cellHeight));
+                    dc.DrawRectangle(BrushFor(bg), null, cellRect);
 
                 string? text = cell.Content;
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    var typeface = new Typeface(Font, FontStyles.Normal,
-                        attrs.IsBold() ? FontWeights.Bold : FontWeights.Normal, FontStretches.Normal);
-                    var formatted = new FormattedText(
-                        text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                        typeface, FontSize, new SolidColorBrush(fg), _pixelsPerDip);
+                if (string.IsNullOrWhiteSpace(text)) continue;
 
-                    if (attrs.IsUnderline())
-                        formatted.SetTextDecorations(TextDecorations.Underline);
+                var fgBrush = BrushFor(fg);
+                if (CellGlyphs.TryDraw(dc, text, cellRect, fgBrush, _pixelsPerDip)) continue;
 
-                    dc.DrawText(formatted, new Point(x, y));
-                }
+                var formatted = new FormattedText(
+                    text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                    attrs.IsBold() ? BoldFace : RegularFace, FontSize, fgBrush, _pixelsPerDip);
+
+                if (attrs.IsUnderline())
+                    formatted.SetTextDecorations(TextDecorations.Underline);
+
+                // A wide character's glyph is narrower than its two cells: center it, so a run of them
+                // is evenly spaced. And line the baseline up with the Latin text's, whichever font
+                // supplied the glyph.
+                double dx = span > 1 ? Math.Max(0, (cellRect.Width - formatted.WidthIncludingTrailingWhitespace) / 2) : 0;
+                dc.DrawText(formatted, new Point(cellRect.X + dx, cellRect.Y + _baseline - formatted.Baseline));
+            }
+        }
+    }
+
+    private void RaiseViewChanged(int max, int value, int rows)
+    {
+        if ((max, value, rows) == _lastView) return;
+        _lastView = (max, value, rows);
+        ViewChanged?.Invoke(max, value, rows);
+    }
+
+    /// <summary>True when the screen shows the live end of the output (not scrolled back into history).</summary>
+    public bool IsAtBottom
+    {
+        get
+        {
+            var terminal = Terminal;
+            if (terminal is null) return true;
+            lock (terminal) return terminal.Buffer.IsAtBottom;
+        }
+    }
+
+    /// <summary>Scrolls the view by whole lines: negative = towards older output, positive = towards the newest.</summary>
+    public void ScrollLines(int lines) => Scroll(t => t.ScrollLines(lines), lines != 0);
+
+    /// <summary>Puts <paramref name="line"/> (0 = oldest history line) at the top of the screen.</summary>
+    public void ScrollToLine(int line) => Scroll(t => t.Buffer.ScrollToLine(line), true);
+
+    public void ScrollToTop() => Scroll(t => t.ScrollToTop(), true);
+
+    public void ScrollToBottom() => Scroll(t => t.ScrollToBottom(), true);
+
+    private void Scroll(Action<XTerm.Terminal> action, bool needed)
+    {
+        var terminal = Terminal;
+        if (terminal is null || !needed) return;
+        lock (terminal) action(terminal);
+        InvalidateVisual();
+    }
+
+    // ---- Selecting text with the mouse -------------------------------------------------------------
+    // Drag to select, double-click for a word, triple-click for a line. The selection itself lives in
+    // XTerm.NET's SelectionManager (anchored to buffer lines, so it survives scrolling); this only feeds
+    // it mouse positions. Copying and pasting are done by the hosting pane.
+
+    /// <summary>True while some text is selected.</summary>
+    public bool HasSelection
+    {
+        get
+        {
+            var terminal = Terminal;
+            if (terminal is null) return false;
+            lock (terminal) return terminal.Selection.HasSelection;
+        }
+    }
+
+    /// <summary>The selected text, lines joined with CRLF and trailing spaces dropped (the screen pads
+    /// every line with blanks, which nobody wants pasted); empty when nothing is selected.</summary>
+    public string GetSelectedText()
+    {
+        var terminal = Terminal;
+        if (terminal is null) return "";
+
+        string text;
+        lock (terminal) text = terminal.Selection.HasSelection ? terminal.Selection.GetSelectionText() : "";
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        return string.Join("\r\n", Array.ConvertAll(lines, l => l.TrimEnd()));
+    }
+
+    public void ClearSelection()
+    {
+        var terminal = Terminal;
+        if (terminal is null) return;
+        lock (terminal) terminal.Selection.ClearSelection();
+        InvalidateVisual();
+    }
+
+    protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+    {
+        var terminal = Terminal;
+        if (terminal is null) return;
+
+        var cell = CellAt(e.GetPosition(this));
+        lock (terminal)
+        {
+            var selection = terminal.Selection;
+            selection.ClearSelection();
+            if (e.ClickCount >= 2)
+            {
+                selection.StartSelection(cell.Col, cell.Row, e.ClickCount == 2 ? SelectionMode.Word : SelectionMode.Line);
+                selection.EndSelection();
             }
         }
 
-        var cursorRect = new Rect(buffer.X * _cellWidth, buffer.Y * _cellHeight, _cellWidth, _cellHeight);
-        if (cursorRect != _lastCursorRect)
-        {
-            _lastCursorRect = cursorRect;
-            CursorMoved?.Invoke(cursorRect);
-        }
+        _anchor = cell;
+        _dragStarted = false;
+        _pressed = e.ClickCount == 1;
+        if (_pressed) CaptureMouse();
+        InvalidateVisual();
+        e.Handled = true;
+    }
 
-        if (terminal.CursorVisible)
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        if (!_pressed) return;
+
+        var point = e.GetPosition(this);
+        ExtendSelection(CellAt(point));
+        _autoScroll.IsEnabled = point.Y < 0 || point.Y > ActualHeight;
+    }
+
+    protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e) => FinishSelecting();
+
+    protected override void OnLostMouseCapture(MouseEventArgs e) => FinishSelecting();
+
+    private void ExtendSelection((int Col, int Row) cell)
+    {
+        var terminal = Terminal;
+        if (terminal is null) return;
+
+        lock (terminal)
         {
-            double cx = buffer.X * _cellWidth;
-            double cy = buffer.Y * _cellHeight;
-            var cursorBrush = new SolidColorBrush(TileScheme.TerminalCursor);
-            dc.DrawRectangle(cursorBrush, null, terminal.Options.CursorStyle switch
+            if (!_dragStarted)
             {
-                CursorStyle.Underline => new Rect(cx, cy + _cellHeight - 2, _cellWidth, 2),
-                CursorStyle.Bar => new Rect(cx, cy, 2, _cellHeight),
-                _ => new Rect(cx, cy, _cellWidth, _cellHeight),
-            });
+                if (cell == _anchor) return;   // a plain click selects nothing
+                terminal.Selection.StartSelection(_anchor.Col, _anchor.Row, SelectionMode.Normal);
+                _dragStarted = true;
+            }
+            terminal.Selection.UpdateSelection(cell.Col, cell.Row);
         }
+        InvalidateVisual();
+    }
+
+    /// <summary>While the mouse is held above or below the terminal, keep scrolling that way and extending
+    /// the selection, so a selection can span more than one screen.</summary>
+    private void OnAutoScrollTick()
+    {
+        if (!_pressed) return;
+
+        var point = Mouse.GetPosition(this);
+        if (point.Y < 0) ScrollLines(-1);
+        else if (point.Y > ActualHeight) ScrollLines(1);
+        ExtendSelection(CellAt(point));
+    }
+
+    private void FinishSelecting()
+    {
+        if (!_pressed) return;
+        _pressed = false;
+        _autoScroll.Stop();
+
+        var terminal = Terminal;
+        if (terminal is not null && _dragStarted)
+            lock (terminal) terminal.Selection.EndSelection();
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        InvalidateVisual();
     }
 
     /// <summary>Maps a WPF named key (Enter, arrows, function keys, ...) to XTerm.NET's key enum.</summary>

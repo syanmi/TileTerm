@@ -20,6 +20,9 @@ namespace TileTerm.Terminal;
 /// </summary>
 public sealed class TerminalSession : IDisposable
 {
+    /// <summary>Lines of output kept above the screen to scroll back to — the Windows console's own default.</summary>
+    private const int ScrollbackLines = 9001;
+
     private readonly CancellationTokenSource _cts = new();
     private IPtyConnection? _pty;
 
@@ -37,7 +40,7 @@ public sealed class TerminalSession : IDisposable
         {
             Cols = cols,
             Rows = rows,
-            Scrollback = 2000,
+            Scrollback = ScrollbackLines,
         });
 
         // Some escape sequences (e.g. device-attribute queries) are answered
@@ -84,7 +87,7 @@ public sealed class TerminalSession : IDisposable
                 int charCount = decoder.GetChars(buffer, 0, read, chars, 0);
                 if (charCount > 0)
                 {
-                    Terminal.Write(new string(chars, 0, charCount));
+                    lock (Terminal) Terminal.Write(new string(chars, 0, charCount));
                     OutputReceived?.Invoke();
                 }
             }
@@ -122,7 +125,7 @@ public sealed class TerminalSession : IDisposable
     public void Resize(int cols, int rows)
     {
         if (cols <= 0 || rows <= 0) return;
-        Terminal.Resize(cols, rows);
+        lock (Terminal) Terminal.Resize(cols, rows);
         _pty?.Resize(cols, rows);
     }
 
