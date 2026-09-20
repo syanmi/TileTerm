@@ -136,7 +136,8 @@ public sealed class TerminalCanvas : FrameworkElement
         }
 
         Rect cursorRect;
-        bool showCursor;
+        bool atBottom, cursorVisible;
+        int cursorCol, totalCols;
         (int Max, int Value, int Rows) view;
 
         // The session's reader thread writes into this buffer while we draw it; both sides take this lock.
@@ -146,8 +147,11 @@ public sealed class TerminalCanvas : FrameworkElement
             DrawCells(dc, terminal);
 
             cursorRect = new Rect(buffer.X * _cellWidth, buffer.Y * _cellHeight, _cellWidth, _cellHeight);
+            cursorCol = buffer.X;
+            totalCols = terminal.Cols;
+            cursorVisible = terminal.CursorVisible;
             // Scrolled back into history, the cursor's row is not on screen.
-            showCursor = terminal.CursorVisible && buffer.IsAtBottom;
+            atBottom = buffer.IsAtBottom;
             view = (buffer.YBase, buffer.YDisp, terminal.Rows);
         }
 
@@ -157,7 +161,13 @@ public sealed class TerminalCanvas : FrameworkElement
             CursorMoved?.Invoke(cursorRect);
         }
 
-        if (showCursor)
+        // Text the IME is still composing (not yet sent to the program) is shown at the cursor, underlined.
+        var composition = CompositionText;
+        bool composing = atBottom && !string.IsNullOrEmpty(composition);
+        if (composing)
+            DrawComposition(dc, composition!, cursorCol, cursorRect.Y, totalCols);
+
+        if (cursorVisible && atBottom && !composing)
         {
             var cursorBrush = BrushFor(TileScheme.TerminalCursor);
             dc.DrawRectangle(cursorBrush, null, terminal.Options.CursorStyle switch
@@ -206,24 +216,73 @@ public sealed class TerminalCanvas : FrameworkElement
                 string? text = cell.Content;
                 if (string.IsNullOrWhiteSpace(text)) continue;
 
-                var fgBrush = BrushFor(fg);
-                if (CellGlyphs.TryDraw(dc, text, cellRect, fgBrush, _pixelsPerDip)) continue;
-
-                var formatted = new FormattedText(
-                    text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                    attrs.IsBold() ? BoldFace : RegularFace, FontSize, fgBrush, _pixelsPerDip);
-
-                if (attrs.IsUnderline())
-                    formatted.SetTextDecorations(TextDecorations.Underline);
-
-                // A wide character's glyph is narrower than its two cells: center it, so a run of them
-                // is evenly spaced. And line the baseline up with the Latin text's, whichever font
-                // supplied the glyph.
-                double dx = span > 1 ? Math.Max(0, (cellRect.Width - formatted.WidthIncludingTrailingWhitespace) / 2) : 0;
-                dc.DrawText(formatted, new Point(cellRect.X + dx, cellRect.Y + _baseline - formatted.Baseline));
+                DrawGlyph(dc, text, cellRect, span, BrushFor(fg), attrs.IsBold(), attrs.IsUnderline());
             }
         }
     }
+
+    private void DrawGlyph(DrawingContext dc, string text, Rect cellRect, int span, SolidColorBrush fgBrush, bool bold, bool underline)
+    {
+        if (CellGlyphs.TryDraw(dc, text, cellRect, fgBrush, _pixelsPerDip)) return;
+
+        var formatted = new FormattedText(
+            text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+            bold ? BoldFace : RegularFace, FontSize, fgBrush, _pixelsPerDip);
+
+        if (underline)
+            formatted.SetTextDecorations(TextDecorations.Underline);
+
+        // A wide character's glyph is narrower than its two cells: center it, so a run of them
+        // is evenly spaced. And line the baseline up with the Latin text's, whichever font
+        // supplied the glyph.
+        double dx = span > 1 ? Math.Max(0, (cellRect.Width - formatted.WidthIncludingTrailingWhitespace) / 2) : 0;
+        dc.DrawText(formatted, new Point(cellRect.X + dx, cellRect.Y + _baseline - formatted.Baseline));
+    }
+
+    /// <summary>What the IME is composing right now — typed but not yet confirmed. Shown at the cursor,
+    /// underlined, until the IME confirms it (then the program echoes it) or cancels it.</summary>
+    public string? CompositionText
+    {
+        get => _compositionText;
+        set
+        {
+            if (_compositionText == value) return;
+            _compositionText = value;
+            InvalidateVisual();
+        }
+    }
+
+    private string? _compositionText;
+
+    private void DrawComposition(DrawingContext dc, string text, int startCol, double y, int totalCols)
+    {
+        var fgBrush = BrushFor(AnsiPalette.DefaultForeground);
+        var bgBrush = BrushFor(AnsiPalette.DefaultBackground);
+
+        int col = startCol;
+        for (int i = 0; i < text.Length;)
+        {
+            int length = char.IsHighSurrogate(text[i]) && i + 1 < text.Length ? 2 : 1;
+            int span = IsWide(char.ConvertToUtf32(text, i)) ? 2 : 1;
+            if (col + span > totalCols) break;
+
+            var cellRect = new Rect(col * _cellWidth, y, span * _cellWidth, _cellHeight);
+            dc.DrawRectangle(bgBrush, null, cellRect);
+            DrawGlyph(dc, text.Substring(i, length), cellRect, span, fgBrush, bold: false, underline: false);
+
+            col += span;
+            i += length;
+        }
+
+        dc.DrawRectangle(fgBrush, null, new Rect(startCol * _cellWidth, y + _cellHeight - 1, (col - startCol) * _cellWidth, 1));
+    }
+
+    /// <summary>Whether a character takes two terminal cells (East Asian wide / fullwidth).</summary>
+    private static bool IsWide(int codePoint) =>
+        codePoint is (>= 0x1100 and <= 0x115F) or (>= 0x2E80 and <= 0x303E) or (>= 0x3041 and <= 0x33FF)
+            or (>= 0x3400 and <= 0x4DBF) or (>= 0x4E00 and <= 0x9FFF) or (>= 0xA000 and <= 0xA4CF)
+            or (>= 0xAC00 and <= 0xD7A3) or (>= 0xF900 and <= 0xFAFF) or (>= 0xFE30 and <= 0xFE6F)
+            or (>= 0xFF00 and <= 0xFF60) or (>= 0xFFE0 and <= 0xFFE6) or (>= 0x20000 and <= 0x3FFFD);
 
     private void RaiseViewChanged(int max, int value, int rows)
     {

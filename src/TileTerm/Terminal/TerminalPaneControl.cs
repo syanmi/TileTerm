@@ -6,6 +6,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using TileTerm;
 
 namespace TileTerm.Terminal;
@@ -51,6 +52,10 @@ public sealed class TerminalPaneControl : Grid
     private double _wheelNotches;
     private Point? _dragStartPoint;
     private bool _composing;
+    private int _compositionLength;   // characters of the IME box's text that are still being composed
+    private Key _lastKey;             // the key behind the input being processed (for an IME-processed key, the key the IME saw)
+    private Rect _cursorRect;
+    private readonly DispatcherTimer _leftoverTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
 
     public Guid PaneId { get; } = Guid.NewGuid();
     public TerminalSession? Session { get; private set; }
@@ -143,12 +148,25 @@ public sealed class TerminalPaneControl : Grid
         _imeBox.PreviewTextInput += OnPreviewTextInput;
         _imeBox.PreviewKeyDown += OnPreviewKeyDown;
         _imeBox.GotKeyboardFocus += (_, _) => Activated?.Invoke();
-        TextCompositionManager.AddPreviewTextInputStartHandler(_imeBox, (_, _) => _composing = true);
-        TextCompositionManager.AddPreviewTextInputUpdateHandler(_imeBox, (_, _) => _composing = true);
+        TextCompositionManager.AddPreviewTextInputStartHandler(_imeBox, (_, _) =>
+        {
+            _composing = true;
+            _leftoverTimer.Stop();
+        });
+        TextCompositionManager.AddPreviewTextInputUpdateHandler(_imeBox, OnCompositionUpdate);
         _imeBox.TextChanged += OnImeBoxTextChanged;
+        _leftoverTimer.Tick += (_, _) =>
+        {
+            _leftoverTimer.Stop();
+            if (!_composing && _imeBox.Text.Length > 0) _imeBox.Clear();
+        };
 
         _canvas.SizeInCellsChanged += (cols, rows) => Session?.Resize(cols, rows);
-        _canvas.CursorMoved += rect => Dispatcher.BeginInvoke(() => PlaceImeBox(rect));
+        _canvas.CursorMoved += rect => Dispatcher.BeginInvoke(() =>
+        {
+            _cursorRect = rect;
+            PlaceImeBox();
+        });
         _canvas.PreviewMouseDown += (_, _) => _imeBox.Focus();
         _canvas.MouseRightButtonUp += (_, e) =>
         {
@@ -198,32 +216,55 @@ public sealed class TerminalPaneControl : Grid
         return box;
     }
 
-    /// <summary>Keeps the IME box sitting exactly on the terminal cursor cell, so the IME
-    /// anchors its candidate window there.</summary>
-    private void PlaceImeBox(Rect cursorRect)
+    /// <summary>Keeps the IME box on the terminal cursor cell, so the IME anchors its candidate window
+    /// there. Text left in the box from earlier phrases (see <see cref="OnPreviewTextInput"/>) sits in front
+    /// of the phrase being composed, so the box is moved left by that much to keep the composition itself
+    /// at the cursor.</summary>
+    private void PlaceImeBox()
     {
-        _imeBox.Margin = new Thickness(cursorRect.X, cursorRect.Y, 0, 0);
-        _imeBox.Height = cursorRect.Height;
+        double leftover = 0;
+        int leftoverLength = _imeBox.Text.Length - _compositionLength;
+        if (leftoverLength > 0)
+        {
+            _imeBox.UpdateLayout();
+            var rect = _imeBox.GetRectFromCharacterIndex(Math.Min(leftoverLength, _imeBox.Text.Length));
+            if (!rect.IsEmpty) leftover = rect.X;
+        }
+
+        _imeBox.Margin = new Thickness(_cursorRect.X - leftover, _cursorRect.Y, 0, 0);
+        _imeBox.Height = _cursorRect.Height;
     }
 
-    /// <summary>The box only exists to host IME composition; while a composition is in
-    /// progress it's shown (opaque, over the terminal text) so the user sees what they're
-    /// typing, and once the text is committed — already sent to the terminal by
-    /// <see cref="OnPreviewTextInput"/>, which TextBox still keeps a copy of — it's emptied.</summary>
+    /// <summary>The box is a text sink that gives the IME somewhere to compose and to put its candidate
+    /// window; it is never visible. What is being composed is drawn on the terminal itself
+    /// (<see cref="TerminalCanvas.CompositionText"/>), which is why the box's own leftover text does not matter.</summary>
+    private void OnCompositionUpdate(object sender, TextCompositionEventArgs e)
+    {
+        string text = e.TextComposition.CompositionText ?? "";
+        _composing = text.Length > 0;
+        _compositionLength = text.Length;
+        _canvas.CompositionText = text;
+
+        // Cancelled (Esc, or deleted back to nothing): text confirmed earlier can go once things are quiet.
+        if (!_composing) _leftoverTimer.Start();
+        Dispatcher.BeginInvoke(PlaceImeBox, DispatcherPriority.Loaded);
+    }
+
     private void OnImeBoxTextChanged(object sender, TextChangedEventArgs e)
     {
-        bool hasText = _imeBox.Text.Length > 0;
-        if (!hasText) _composing = false; // composition cancelled (e.g. Esc) or emptied
-        _imeBox.Foreground = hasText ? Theme.TerminalFg : Brushes.Transparent;
-        _imeBox.Background = hasText ? Theme.TerminalBg : Brushes.Transparent;
-        _imeBox.BorderBrush = hasText ? Theme.TerminalFg : Brushes.Transparent;
-        // The theme's TextBox template paints a focused box's border in the accent color whatever the
-        // brush above says; with no thickness there is nothing to paint while the box is idle.
-        _imeBox.BorderThickness = hasText ? new Thickness(0, 0, 0, 1) : new Thickness(0);
+        if (_imeBox.Text.Length > 0) return;
 
-        if (hasText && !_composing)
-            Dispatcher.BeginInvoke(() => { if (!_composing) _imeBox.Clear(); });
+        _composing = false; // composition cancelled (e.g. Esc) or the box was emptied
+        _compositionLength = 0;
+        _canvas.CompositionText = null;
     }
+
+    /// <summary>Whether a key can begin a new IME composition — every typing key can; Enter, Esc, Tab,
+    /// editing and cursor keys cannot.</summary>
+    private static bool CanStartComposition(Key key) =>
+        key is not (Key.Enter or Key.Escape or Key.Tab or Key.Back or Key.Delete or Key.Insert
+            or Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End or Key.PageUp or Key.PageDown)
+        && !(key >= Key.F1 && key <= Key.F24);
 
     private FrameworkElement BuildHeader()
     {
@@ -436,18 +477,41 @@ public sealed class TerminalPaneControl : Grid
         foreach (char c in e.Text)
             sb.Append(terminal.GenerateCharInput(c, XTerm.Input.KeyModifiers.None));
 
+        bool imeCommit = _composing;
         Send(sb.ToString());
         _composing = false;
-        e.Handled = true;
+        _compositionLength = 0;
+        _canvas.CompositionText = null;
 
-        // TextBox still keeps its own copy of a committed IME composition even though this
-        // handler consumed the event; TextChanged fires *before* this (while _composing is
-        // still true), so the emptying has to happen here.
-        Dispatcher.BeginInvoke(() => { if (!_composing) _imeBox.Clear(); });
+        // Plain typed characters never reach the box; consuming them keeps it that way. An IME's
+        // confirmed text is left alone (not marked handled): consuming it stops the IME from starting the
+        // next composition with the same keystroke — typing "ga" after converting a phrase confirms it
+        // and begins a new phrase with that key, and that first key was being lost.
+        if (!imeCommit)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        // The box keeps its copy of the confirmed text. Changing the box's text while the IME is starting
+        // its next composition cancels that composition, so the text is only removed right away when the
+        // key that confirmed it (Enter and the like) cannot begin another one; otherwise it waits for
+        // a quiet moment (see _leftoverTimer).
+        if (CanStartComposition(_lastKey))
+        {
+            _leftoverTimer.Stop();
+            _leftoverTimer.Start();
+        }
+        else
+        {
+            Dispatcher.BeginInvoke(() => { if (!_composing) _imeBox.Clear(); });
+        }
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        _lastKey = e.Key == Key.ImeProcessed ? e.ImeProcessedKey : e.Key;
+
         // While an IME composition is in progress, WPF reports every key it intercepts
         // (including Enter/Escape/Space/arrows used to convert and confirm candidates) as
         // Key.ImeProcessed rather than its literal key. Mapping and sending those straight
