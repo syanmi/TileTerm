@@ -24,21 +24,8 @@ internal sealed class AppSettings
     /// On by default; the user can turn it off in the settings.</summary>
     public bool CheckForUpdates { get; set; } = true;
 
-    // What happens when a program in a tile asks for attention (BEL, or a notification escape sequence
-    // such as OSC 9) while its window is not the active one — see AttentionService.
-
-    /// <summary>Put a mark on the window's taskbar button until the window is activated.</summary>
-    public bool NotifyTaskbarBadge { get; set; } = true;
-
-    /// <summary>Show a Windows toast notification.</summary>
-    public bool NotifyToast { get; set; } = true;
-
-    /// <summary>Restore the window (even from minimized) and bring it in front of other windows.</summary>
-    public bool NotifyBringToFront { get; set; } = false;
-
-    /// <summary>Count a plain BEL as a notification. Programs also ring it for small things (a failed tab
-    /// completion), so it can be turned off, leaving only the explicit notification sequences.</summary>
-    public bool NotifyOnBell { get; set; } = true;
+    // Notifications (AttentionService) have no settings; the switches an unreleased build wrote
+    // (NotifyTaskbarBadge, NotifyToast, ...) are ignored on load and dropped on the next save.
 
     private static string FilePath => Path.Combine(AppPaths.DataDirectory, "settings.json");
 

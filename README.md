@@ -25,8 +25,9 @@ each of them — cmd, PowerShell, Git Bash, Claude Code, and anything else that 
   (like VS Code), so a change made in the settings — theme, profiles, favorites — applies to every window at once.
 - **Notifications from command-line tools**: when a program in a tile rings the bell (BEL) or sends a
   notification (OSC 9, OSC 777) while its window is in the background — Claude Code finishing a task, say —
-  TileTerm marks the window's taskbar button and shows a Windows notification; it can also bring the window to
-  the front. Configure it under **Settings → 通知**. For Claude Code, set its notification channel (`/config`)
+  TileTerm flashes and marks the window's taskbar button and shows a Windows notification; clicking the
+  notification takes you back to that tile. To turn the notifications off, use Windows' own settings
+  (**Settings → System → Notifications → TileTerm**). For Claude Code, set its notification channel (`/config`)
   to `terminal_bell` or `iterm2`.
 - **Japanese input (IME)**: text being composed is shown at the cursor.
 - **Dark and light themes**: switch in the settings, no restart needed. The tiles themselves stay dark in

@@ -1,9 +1,11 @@
 using System.ComponentModel;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shell;
@@ -27,7 +29,8 @@ public partial class MainWindow : Window
     /// another window brings the existing one forward — so two dialogs can't hold conflicting edits.</summary>
     private static SettingsWindow? s_settingsWindow;
 
-    private static ImageSource? s_attentionBadge;
+    /// <summary>The normal window icon while <see cref="ShowAttention"/> has swapped in the one with the dot.</summary>
+    private ImageSource? _iconBeforeAttention;
 
     public MainWindow()
     {
@@ -86,40 +89,54 @@ public partial class MainWindow : Window
             _profileStore.Changed -= RebuildFavoritesBar;
         };
 
-        Activated += (_, _) => ClearAttentionBadge();
+        Activated += (_, _) => ClearAttention();
     }
 
-    /// <summary>Marks this window's taskbar button (a red dot over the icon) to show that a tile asked for
-    /// attention while the window was in the background; cleared when the window is activated.
-    /// See <see cref="AttentionService"/>.</summary>
-    public void ShowAttentionBadge()
+    /// <summary>Shows on this window's taskbar button that a tile asked for attention while the window was
+    /// in the background: the window icon gets a red dot at its top-right (<see cref="AttentionIcon"/>), and
+    /// the button flashes and stays highlighted (drawn by Windows, the same as other terminals do on a bell).
+    /// Both go away when the window is activated. See <see cref="AttentionService"/>.</summary>
+    public void ShowAttention()
     {
-        TaskbarItemInfo ??= new TaskbarItemInfo();
-        TaskbarItemInfo.Overlay = s_attentionBadge ??= CreateAttentionBadge();
-        TaskbarItemInfo.Description = "TileTerm - 通知があります";
+        _iconBeforeAttention ??= Icon;
+        try { Icon = AttentionIcon.Get(); }
+        catch (Exception) { /* the flash below still tells the user */ }
+
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        var info = new FLASHWINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<FLASHWINFO>(),
+            hwnd = hwnd,
+            // TIMERNOFG: until the window comes to the foreground; Windows flashes a few times and then
+            // leaves the button highlighted.
+            dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG,
+        };
+        FlashWindowEx(ref info);
     }
 
-    private void ClearAttentionBadge()
+    private void ClearAttention()
     {
-        if (TaskbarItemInfo is null) return;
-        TaskbarItemInfo.Overlay = null;
-        TaskbarItemInfo.Description = "";
+        if (_iconBeforeAttention is null) return;
+        Icon = _iconBeforeAttention;
+        _iconBeforeAttention = null;
     }
 
-    /// <summary>A red dot with a white rim (so it stands out against any icon), as a bitmap: the taskbar
-    /// overlay is converted to an icon, which works best from pixels.</summary>
-    private static ImageSource CreateAttentionBadge()
+    private const uint FLASHW_TRAY = 0x2;
+    private const uint FLASHW_TIMERNOFG = 0xC;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FLASHWINFO
     {
-        const int size = 32;
-        var visual = new DrawingVisual();
-        using (var dc = visual.RenderOpen())
-            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(0xE8, 0x11, 0x23)), new Pen(Brushes.White, 3),
-                new Point(size / 2.0, size / 2.0), size / 2.0 - 2, size / 2.0 - 2);
-        var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(visual);
-        bitmap.Freeze();
-        return bitmap;
+        public uint cbSize;
+        public IntPtr hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
     }
+
+    [DllImport("user32.dll")]
+    private static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {

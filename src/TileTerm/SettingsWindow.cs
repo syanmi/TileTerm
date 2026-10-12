@@ -12,8 +12,8 @@ using Rectangle = System.Windows.Shapes.Rectangle;
 namespace TileTerm;
 
 /// <summary>
-/// The app's settings dialog. Has a category sidebar on the left with four
-/// categories today — "プロンプト", "テーマ", "アップデート" and "通知" — and the matching page on the right.
+/// The app's settings dialog. Has a category sidebar on the left with three
+/// categories today — "プロンプト", "テーマ" and "アップデート" — and the matching page on the right.
 /// It is modeless and there is at most one for the whole app (see <c>MainWindow.OpenSettings</c>): every
 /// window shares the settings, and a modal dialog would freeze the other windows' terminals.
 /// "プロンプト" is the profile list + editor: add/edit/remove
@@ -23,8 +23,7 @@ namespace TileTerm;
 /// dark/light theme (see <see cref="ThemeManager"/>, persisted to <c>settings.json</c>);
 /// like the profile edits it takes effect on 適用/OK, and the whole app — this dialog
 /// included — re-colors on the spot. "アップデート" holds the on/off switch for the startup update
-/// check (see <see cref="UpdateService"/>), applied the same way, and a "今すぐ確認" button. "通知" holds the
-/// switches for what a program's bell/notification does (see <see cref="AttentionService"/>), applied the same way.
+/// check (see <see cref="UpdateService"/>), applied the same way, and a "今すぐ確認" button.
 ///
 /// Modeled on the JetBrains (CLion) settings dialog: a flush category list |
 /// list-with-toolbar | form, with draggable splitters between them; form rows put
@@ -77,12 +76,6 @@ public sealed class SettingsWindow : Window
     private readonly Button _checkNowButton = Theme.Button("今すぐ確認");
     private readonly TextBlock _updateStatus = Theme.Hint("");
     private bool _pendingCheckUpdates = AppSettings.Current.CheckForUpdates;
-    private StackPanel _notifyPanel = null!;
-    private readonly CheckBox _notifyBadgeBox = Theme.CheckBox("タスクバーのアイコンにマークを表示する");
-    private readonly CheckBox _notifyToastBox = Theme.CheckBox("トースト通知を表示する");
-    private readonly CheckBox _notifyFrontBox = Theme.CheckBox("ウィンドウを前面に表示する(最小化されていても元に戻す)");
-    private readonly CheckBox _notifyBellBox = Theme.CheckBox("ベル(BEL)も通知として扱う");
-    private NotifySettings _pendingNotify = NotifySettings.FromCurrent();
     private string _iconPath = "";
     private ProfileDefinition? _editing;
     private bool _suppressToggleEvents;
@@ -149,7 +142,6 @@ public sealed class SettingsWindow : Window
         categoryList.Items.Add("プロンプト");
         categoryList.Items.Add("テーマ");
         categoryList.Items.Add("アップデート");
-        categoryList.Items.Add("通知");
         categoryList.SelectionChanged += (_, _) => ShowCategory(categoryList.SelectedIndex);
         Grid.SetColumn(categoryList, 0);
         main.Children.Add(categoryList);
@@ -178,10 +170,6 @@ public sealed class SettingsWindow : Window
         Grid.SetRow(_updatePanel, 1);
         rightSide.Children.Add(_updatePanel);
 
-        _notifyPanel = BuildNotifyPanel();
-        Grid.SetRow(_notifyPanel, 1);
-        rightSide.Children.Add(_notifyPanel);
-
         Grid.SetColumn(rightSide, 2);
         main.Children.Add(rightSide);
 
@@ -192,64 +180,10 @@ public sealed class SettingsWindow : Window
 
     private void ShowCategory(int index)
     {
-        _headerText.Text = index switch { 1 => "テーマ", 2 => "アップデート", 3 => "通知", _ => "プロンプト" };
+        _headerText.Text = index switch { 1 => "テーマ", 2 => "アップデート", _ => "プロンプト" };
         _promptBody.Visibility = index == 0 ? Visibility.Visible : Visibility.Collapsed;
         _themePanel.Visibility = index == 1 ? Visibility.Visible : Visibility.Collapsed;
         _updatePanel.Visibility = index == 2 ? Visibility.Visible : Visibility.Collapsed;
-        _notifyPanel.Visibility = index == 3 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    /// <summary>The "通知" page: what happens when a program in a tile rings the bell or sends a notification
-    /// while its window is in the background (see <see cref="AttentionService"/>). Pending until 適用/OK.</summary>
-    private StackPanel BuildNotifyPanel()
-    {
-        void Bind(CheckBox box, bool initial, Func<NotifySettings, bool, NotifySettings> with)
-        {
-            box.IsChecked = initial;
-            box.Checked += (_, _) => { _pendingNotify = with(_pendingNotify, true); UpdateApplyState(); };
-            box.Unchecked += (_, _) => { _pendingNotify = with(_pendingNotify, false); UpdateApplyState(); };
-        }
-        Bind(_notifyBadgeBox, _pendingNotify.Badge, (s, v) => s with { Badge = v });
-        Bind(_notifyToastBox, _pendingNotify.Toast, (s, v) => s with { Toast = v });
-        Bind(_notifyFrontBox, _pendingNotify.BringToFront, (s, v) => s with { BringToFront = v });
-        Bind(_notifyBellBox, _pendingNotify.Bell, (s, v) => s with { Bell = v });
-
-        var panel = new StackPanel { Margin = new Thickness(16, 0, 16, 14), Visibility = Visibility.Collapsed };
-        panel.Children.Add(Theme.Label("タイルのプログラムから通知が来たとき"));
-        panel.Children.Add(Theme.Hint("コマンドラインツールの完了通知など。そのタイルのウィンドウがアクティブでないときだけ通知します。"));
-
-        void AddOption(CheckBox box, string? hint, double top)
-        {
-            box.Margin = new Thickness(0, top, 0, 0);
-            panel.Children.Add(box);
-            if (hint is null) return;
-            var hintBlock = Theme.Hint(hint);
-            hintBlock.Margin = new Thickness(20, 3, 0, 0);
-            hintBlock.TextWrapping = TextWrapping.Wrap;
-            panel.Children.Add(hintBlock);
-        }
-        AddOption(_notifyBadgeBox, "ウィンドウをアクティブにすると消えます。", 12);
-        AddOption(_notifyToastBox, "クリックすると、通知したタイルのウィンドウに戻ります。", 10);
-        AddOption(_notifyFrontBox,
-            "Windowsの制限で、別のアプリで入力中のときはキーボードの入力先までは移りません(ウィンドウは手前に出て、タスクバーのボタンが点滅します)。", 10);
-        AddOption(_notifyBellBox,
-            "オフにすると、通知用のエスケープシーケンス(OSC 9 / OSC 777)だけを通知として扱います。ベルはTab補完の失敗などでも鳴ります。", 10);
-
-        var claudeHint = Theme.Hint("Claude Code の場合: /config の通知方式(Notifications)を「terminal_bell」(ベル)か「iterm2」(OSC 9)にすると、完了や入力待ちを通知できます。");
-        claudeHint.Margin = new Thickness(0, 18, 0, 0);
-        claudeHint.TextWrapping = TextWrapping.Wrap;
-        panel.Children.Add(claudeHint);
-        return panel;
-    }
-
-    /// <summary>The "通知" page's four switches, as one value so "changed from what is in effect" is a comparison.</summary>
-    private readonly record struct NotifySettings(bool Badge, bool Toast, bool BringToFront, bool Bell)
-    {
-        public static NotifySettings FromCurrent()
-        {
-            var s = AppSettings.Current;
-            return new NotifySettings(s.NotifyTaskbarBadge, s.NotifyToast, s.NotifyBringToFront, s.NotifyOnBell);
-        }
     }
 
     /// <summary>The "アップデート" page: the switch for the check at startup (pending until 適用/OK, like
@@ -734,9 +668,7 @@ public sealed class SettingsWindow : Window
 
     /// <summary>適用 is only meaningful while something differs from what is currently in effect:
     /// the profile form vs. what was loaded into it, or the chosen theme vs. the active one.</summary>
-    private bool NotifyDirty => _pendingNotify != NotifySettings.FromCurrent();
-
-    private void UpdateApplyState() => _applyButton.IsEnabled = ProfileDirty || ThemeDirty || UpdateSettingDirty || NotifyDirty;
+    private void UpdateApplyState() => _applyButton.IsEnabled = ProfileDirty || ThemeDirty || UpdateSettingDirty;
 
     private void LoadSelected()
     {
@@ -806,15 +738,6 @@ public sealed class SettingsWindow : Window
         {
             AppSettings.Current.CheckForUpdates = _pendingCheckUpdates;
             AppSettings.Current.Save();
-        }
-        if (NotifyDirty)
-        {
-            var settings = AppSettings.Current;
-            settings.NotifyTaskbarBadge = _pendingNotify.Badge;
-            settings.NotifyToast = _pendingNotify.Toast;
-            settings.NotifyBringToFront = _pendingNotify.BringToFront;
-            settings.NotifyOnBell = _pendingNotify.Bell;
-            settings.Save();
         }
         if (ProfileDirty) ApplyProfileEdits();
         UpdateApplyState();
