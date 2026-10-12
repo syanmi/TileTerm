@@ -646,6 +646,17 @@ public sealed class TerminalPaneControl : Grid
             return;
         }
 
+        // A WPF TextBox (the IME box has the focus) raises no TextInput for the space bar, so a plain
+        // space never reached the program. Send it here. Ctrl+Space is NUL, as in other terminals (Emacs
+        // sets the mark with it). With the IME on, the space bar arrives as ImeProcessed and is left to
+        // the IME above (it converts, or types a full-width space). Alt+Space stays the window menu.
+        if (e.Key == Key.Space && (Keyboard.Modifiers & ModifierKeys.Alt) == 0)
+        {
+            Send((Keyboard.Modifiers & ModifierKeys.Control) != 0 ? "\0" : " ");
+            e.Handled = true;
+            return;
+        }
+
         var mapped = TerminalCanvas.MapKey(e.Key);
         if (mapped is { } key)
         {
