@@ -40,7 +40,11 @@ public sealed class SettingsWindow : Window
     private readonly TextBox _exeBox = Theme.TextBox();
     private readonly TextBox _argsBox = Theme.TextBox();
     private readonly TextBox _cwdBox = Theme.TextBox();
-    private readonly Button _defaultButton = Theme.Button("既定のプロンプトにする");
+    private readonly CheckBox _defaultCheck = Theme.CheckBox("既定のプロンプト").Also(c =>
+    {
+        c.VerticalAlignment = VerticalAlignment.Center;
+        c.ToolTip = "分割ボタンで開くプロンプトです。外すには別のプロンプトを既定にします";
+    });
     private readonly Button _applyButton = Theme.Button("適用");
     private readonly CheckBox _favoriteCheck = Theme.CheckBox("お気に入りに登録").Also(c =>
     {
@@ -73,6 +77,7 @@ public sealed class SettingsWindow : Window
     private string _iconPath = "";
     private ProfileDefinition? _editing;
     private bool _suppressToggleEvents;
+    private bool _suppressSelectionLoad;
     private (string, string, string, string, string) _loadedFields;
 
     public SettingsWindow(ProfileStore store)
@@ -368,7 +373,7 @@ public sealed class SettingsWindow : Window
 
         addButton.Click += (_, _) => AddNew();
         removeButton.Click += (_, _) => RemoveSelected();
-        _list.SelectionChanged += (_, _) => LoadSelected();
+        _list.SelectionChanged += (_, _) => { if (!_suppressSelectionLoad) LoadSelected(); };
 
         return body;
     }
@@ -378,7 +383,7 @@ public sealed class SettingsWindow : Window
     /// with the 既定/お気に入り status shown as right-aligned glyphs — an outline glyph
     /// when off, a filled one when on (☆→★, ♡→♥), rather than mixing in a letter marker.
     /// </summary>
-    private static DataTemplate BuildProfileRowTemplate()
+    private DataTemplate BuildProfileRowTemplate()
     {
         var starGlyph = new BoolToValueConverter { WhenTrue = "★", WhenFalse = "☆" };
         var starBrush = new BoolToValueConverter { WhenTrue = Theme.GoldStar, WhenFalse = Theme.FgMuted };
@@ -393,19 +398,37 @@ public sealed class SettingsWindow : Window
         rightPanel.SetValue(DockPanel.DockProperty, Dock.Right);
         rightPanel.SetValue(FrameworkElement.MarginProperty, new Thickness(8, 0, 0, 0));
 
+        // The glyphs double as toggles: clicking one changes that profile's status directly,
+        // without selecting the row (the handler marks the click handled). A transparent
+        // background and a little padding make the whole glyph cell clickable, not just its ink.
         var starText = new FrameworkElementFactory(typeof(TextBlock));
-        starText.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 6, 0));
+        starText.SetValue(TextBlock.PaddingProperty, new Thickness(3, 0, 3, 0));
         starText.SetValue(TextBlock.FontSizeProperty, 12.0);
-        starText.SetValue(FrameworkElement.ToolTipProperty, "既定のプロンプト");
+        starText.SetValue(TextBlock.BackgroundProperty, Brushes.Transparent);
+        starText.SetValue(FrameworkElement.CursorProperty, Cursors.Hand);
+        starText.SetValue(FrameworkElement.ToolTipProperty, "既定のプロンプト(クリックで既定にする)");
         starText.SetBinding(TextBlock.TextProperty, new Binding(nameof(ProfileRow.IsDefault)) { Converter = starGlyph });
         starText.SetBinding(TextBlock.ForegroundProperty, new Binding(nameof(ProfileRow.IsDefault)) { Converter = starBrush });
+        starText.AddHandler(UIElement.MouseLeftButtonDownEvent, new MouseButtonEventHandler((s, e) =>
+        {
+            if ((s as FrameworkElement)?.DataContext is ProfileRow row) SetDefault(row.Profile);
+            e.Handled = true;
+        }));
         rightPanel.AppendChild(starText);
 
         var heartText = new FrameworkElementFactory(typeof(TextBlock));
+        heartText.SetValue(TextBlock.PaddingProperty, new Thickness(3, 0, 3, 0));
         heartText.SetValue(TextBlock.FontSizeProperty, 12.0);
-        heartText.SetValue(FrameworkElement.ToolTipProperty, "お気に入り");
+        heartText.SetValue(TextBlock.BackgroundProperty, Brushes.Transparent);
+        heartText.SetValue(FrameworkElement.CursorProperty, Cursors.Hand);
+        heartText.SetValue(FrameworkElement.ToolTipProperty, "お気に入り(クリックで切り替え)");
         heartText.SetBinding(TextBlock.TextProperty, new Binding(nameof(ProfileRow.IsFavorite)) { Converter = heartGlyph });
         heartText.SetBinding(TextBlock.ForegroundProperty, new Binding(nameof(ProfileRow.IsFavorite)) { Converter = heartBrush });
+        heartText.AddHandler(UIElement.MouseLeftButtonDownEvent, new MouseButtonEventHandler((s, e) =>
+        {
+            if ((s as FrameworkElement)?.DataContext is ProfileRow row) SetFavorite(row.Profile, !row.IsFavorite);
+            e.Handled = true;
+        }));
         rightPanel.AppendChild(heartText);
 
         dock.AppendChild(rightPanel);
@@ -452,16 +475,21 @@ public sealed class SettingsWindow : Window
         AddFormRow(form, "作業ディレクトリ", _cwdBox, Theme.Hint("空欄ならユーザーフォルダ"));
 
         var optionsRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-        optionsRow.Children.Add(_defaultButton);
+        optionsRow.Children.Add(_defaultCheck);
+        _defaultCheck.Checked += (_, _) =>
+        {
+            if (!_suppressToggleEvents && _editing is not null) SetDefault(_editing);
+        };
+        // There is always exactly one default (the split buttons need one), so unchecking
+        // the current default is refused: the box just snaps back on.
+        _defaultCheck.Unchecked += (_, _) =>
+        {
+            if (!_suppressToggleEvents) UpdateStatusControls();
+        };
         _favoriteCheck.Checked += (_, _) => OnFavoriteToggled(true);
         _favoriteCheck.Unchecked += (_, _) => OnFavoriteToggled(false);
         optionsRow.Children.Add(_favoriteCheck);
         AddFormRow(form, "", optionsRow, null);
-
-        _defaultButton.Click += (_, _) =>
-        {
-            if (_editing is not null) { _store.SetDefault(_editing); Refresh(); }
-        };
 
         return new ScrollViewer { Content = form, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, 4, 0) };
     }
@@ -651,22 +679,54 @@ public sealed class SettingsWindow : Window
         _argsBox.Text = _editing is null ? "" : CommandLineText.Join(_editing.Arguments);
         _cwdBox.Text = _editing?.WorkingDirectory ?? "";
         UpdateIconPreview();
-
-        bool hasSelection = _editing is not null;
-        _defaultButton.IsEnabled = hasSelection && _store.GetDefaultProfile() != _editing;
-        _favoriteCheck.IsEnabled = hasSelection;
-        _favoriteCheck.IsChecked = hasSelection && _store.IsFavorite(_editing!);
         _suppressToggleEvents = false;
+        UpdateStatusControls();
 
         _loadedFields = CurrentFields();
         UpdateApplyState();
     }
 
+    /// <summary>Syncs the 既定/お気に入り checkboxes with the store for the selected profile.</summary>
+    private void UpdateStatusControls()
+    {
+        _suppressToggleEvents = true;
+        bool hasSelection = _editing is not null;
+        _defaultCheck.IsEnabled = hasSelection;
+        _defaultCheck.IsChecked = hasSelection && _store.GetDefaultProfile() == _editing;
+        _favoriteCheck.IsEnabled = hasSelection;
+        _favoriteCheck.IsChecked = hasSelection && _store.IsFavorite(_editing!);
+        _suppressToggleEvents = false;
+    }
+
     private void OnFavoriteToggled(bool isFavorite)
     {
         if (_suppressToggleEvents || _editing is null) return;
-        _store.SetFavorite(_editing, isFavorite);
-        Refresh();
+        SetFavorite(_editing, isFavorite);
+    }
+
+    private void SetDefault(ProfileDefinition profile)
+    {
+        _store.SetDefault(profile);
+        RefreshStatus();
+    }
+
+    private void SetFavorite(ProfileDefinition profile, bool isFavorite)
+    {
+        _store.SetFavorite(profile, isFavorite);
+        RefreshStatus();
+    }
+
+    /// <summary>
+    /// Re-renders the list's ☆/♡ markers and the checkboxes after a 既定/お気に入り change,
+    /// without reloading the form — <see cref="Refresh"/> would overwrite unsaved edits in the
+    /// text fields with the stored values.
+    /// </summary>
+    private void RefreshStatus()
+    {
+        _suppressSelectionLoad = true;
+        try { RebuildRows(); }
+        finally { _suppressSelectionLoad = false; }
+        UpdateStatusControls();
     }
 
     private void ApplyEdits()
@@ -703,6 +763,12 @@ public sealed class SettingsWindow : Window
 
     private void Refresh()
     {
+        RebuildRows();
+        LoadSelected();
+    }
+
+    private void RebuildRows()
+    {
         var selected = _editing;
         var rows = _store.Profiles.Select(p => new ProfileRow(
             p, p.Name, ProfileIcons.Get(p), p.Id == _store.DefaultProfileId, _store.IsFavorite(p))).ToList();
@@ -710,8 +776,6 @@ public sealed class SettingsWindow : Window
 
         if (selected is not null)
             _list.SelectedItem = rows.FirstOrDefault(r => r.Profile == selected);
-
-        LoadSelected();
     }
 
     private sealed record ProfileRow(ProfileDefinition Profile, string Name, ImageSource Icon, bool IsDefault, bool IsFavorite)
