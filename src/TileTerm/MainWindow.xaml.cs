@@ -17,9 +17,14 @@ namespace TileTerm;
 /// </summary>
 public partial class MainWindow : Window
 {
-    private readonly ProfileStore _profileStore = new();
+    /// <summary>Shared by every window (they all live in one process, see <see cref="SingleInstance"/>), so
+    /// a profile/favorite edited from any window's settings shows up in all of them.</summary>
+    private readonly ProfileStore _profileStore = ProfileStore.Shared;
     private PaneManager? _paneManager;
-    private bool _applyingUpdate;
+
+    /// <summary>The settings dialog, if open. There is only ever one for the whole app — opening it from
+    /// another window brings the existing one forward — so two dialogs can't hold conflicting edits.</summary>
+    private static SettingsWindow? s_settingsWindow;
 
     public MainWindow()
     {
@@ -71,12 +76,16 @@ public partial class MainWindow : Window
 
         UpdateButton.Click += (_, _) => ApplyUpdate();
         UpdateService.Instance.PendingChanged += RefreshUpdateButton;
-        Closed += (_, _) => UpdateService.Instance.PendingChanged -= RefreshUpdateButton;
+        _profileStore.Changed += RebuildFavoritesBar;
+        Closed += (_, _) =>
+        {
+            UpdateService.Instance.PendingChanged -= RefreshUpdateButton;
+            _profileStore.Changed -= RebuildFavoritesBar;
+        };
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _profileStore.Load();
         var initial = _profileStore.GetDefaultProfile() ?? new ProfileDefinition();
         _paneManager = new PaneManager(PaneHost, initial);
         _paneManager.LastPaneCloseRequested += () => Close();
@@ -124,7 +133,7 @@ public partial class MainWindow : Window
 
         var answer = MessageDialog.Show(
             this,
-            $"TileTerm v{version} をダウンロードしました。\n今すぐ再起動して更新しますか？\n\n開いているタイルはすべて閉じられます(分割の配置は保存されません)。",
+            $"TileTerm v{version} をダウンロードしました。\n今すぐ再起動して更新しますか？\n\n開いているすべてのウィンドウとタイルが閉じられます(分割の配置は保存されません)。",
             "TileTerm - 更新", MessageBoxButton.OKCancel);
         if (answer != MessageBoxResult.OK) return;
 
@@ -138,8 +147,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        _applyingUpdate = true;   // OnClosing must not ask "close all tiles?" again
-        Close();
+        // Every window, since they are all this one process; none of them asks "close all tiles?" again.
+        App.CloseAllForUpdate();
     }
 
     private void SplitWithDefault(SplitDirection direction)
@@ -155,9 +164,21 @@ public partial class MainWindow : Window
 
     private void OpenSettings()
     {
+        // Modeless, so the other windows' terminals keep taking input while it is open (a modal dialog
+        // disables every window of the thread, i.e. all of TileTerm). Its edits reach every window through
+        // ProfileStore.Changed and the theme brushes.
+        if (s_settingsWindow is { } open)
+        {
+            open.Owner = this;   // move it in front of the window it was asked from
+            if (open.WindowState == WindowState.Minimized) open.WindowState = WindowState.Normal;
+            open.Activate();
+            return;
+        }
+
         var window = new SettingsWindow(_profileStore) { Owner = this };
-        window.ShowDialog();
-        RebuildFavoritesBar(); // profiles / default / favorites may have changed
+        window.Closed += (_, _) => s_settingsWindow = null;
+        s_settingsWindow = window;
+        window.Show();
     }
 
     /// <summary>Rebuilds the row of favorite-profile quick-launch buttons after the
@@ -216,10 +237,10 @@ public partial class MainWindow : Window
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         // Applying an update already asked (see ApplyUpdate), so it closes without the second question.
-        if (!_applyingUpdate)
+        if (!App.ClosingForUpdate)
         {
             var result = MessageDialog.Show(
-                this, "開いているすべてのタイルを閉じます。よろしいですか？", "TileTerm", MessageBoxButton.OKCancel);
+                this, "このウィンドウで開いているすべてのタイルを閉じます。よろしいですか？", "TileTerm", MessageBoxButton.OKCancel);
 
             if (result != MessageBoxResult.OK)
             {

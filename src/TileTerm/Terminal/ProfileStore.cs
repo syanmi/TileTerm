@@ -20,6 +20,19 @@ public sealed class ProfileStore
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly string _filePath;
 
+    /// <summary>The one copy every window uses (all windows share a process, see <see cref="SingleInstance"/>),
+    /// loaded on first use. Windows listen to <see cref="Changed"/> to pick up edits made in any of them.</summary>
+    public static ProfileStore Shared => s_shared.Value;
+    private static readonly Lazy<ProfileStore> s_shared = new(() =>
+    {
+        var store = new ProfileStore();
+        store.Load();
+        return store;
+    });
+
+    /// <summary>Raised after every save — profiles added, edited or removed, or the default/favorites changed.</summary>
+    public event Action? Changed;
+
     public List<ProfileDefinition> Profiles { get; private set; } = new();
     public string? DefaultProfileId { get; private set; }
     public List<string> FavoriteProfileIds { get; private set; } = new();
@@ -88,6 +101,7 @@ public sealed class ProfileStore
             FavoriteProfileIds = FavoriteProfileIds,
         };
         File.WriteAllText(_filePath, JsonSerializer.Serialize(data, JsonOptions));
+        Changed?.Invoke();
     }
 
     public void AddProfile(ProfileDefinition profile)

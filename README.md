@@ -21,6 +21,8 @@ each of them — cmd, PowerShell, Git Bash, Claude Code, and anything else that 
   apps such as Claude Code render correctly.
 - **Favorites bar**: pin profiles to the title bar; double-click one to open it in a side-by-side split,
   right double-click for a stacked split.
+- **Multiple windows, one set of settings**: launching TileTerm again opens another window of the running app
+  (like VS Code), so a change made in the settings — theme, profiles, favorites — applies to every window at once.
 - **Japanese input (IME)**: text being composed is shown at the cursor.
 - **Dark and light themes**: switch in the settings, no restart needed. The tiles themselves stay dark in
   both themes.
@@ -58,7 +60,7 @@ Get-FileHash .\TileTerm-win-Setup.exe -Algorithm SHA256
 
 TileTerm checks GitHub for a newer release each time it starts and downloads it in the background. When one is
 ready, an **↑ vX.Y.Z に更新** button appears in the title bar; click it, confirm, and TileTerm restarts into the new
-version. Nothing is applied without your confirmation, because restarting closes the open tiles.
+version. Nothing is applied without your confirmation, because restarting closes every open window and tile.
 
 Both the installer and the portable build update this way, and your settings are kept. Automatic checks can be
 turned off (and a check run on demand) under **Settings → アップデート**. A build that was not installed by
