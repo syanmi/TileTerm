@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Windows;
+using System.Windows.Media;
 
 namespace TileTerm;
 
@@ -41,6 +42,26 @@ public partial class App : Application
         {
             return false;   // the last window closed a moment ago and the app is on its way out
         }
+    }
+
+    /// <summary>Opens a window holding <paramref name="pane"/>, a tile dragged out of
+    /// <paramref name="source"/> and dropped outside every window at <paramref name="screenPoint"/>
+    /// (physical pixels). The new window takes the source window's size, with its title bar under the
+    /// cursor, as if the tile had been pulled out by its title.</summary>
+    internal static void OpenWindowWithPane(Terminal.TerminalPaneControl pane, Point screenPoint, Window source)
+    {
+        var dpi = VisualTreeHelper.GetDpi(source);
+        var size = source.WindowState == WindowState.Normal ? new Size(source.Width, source.Height) : source.RestoreBounds.Size;
+        var window = new MainWindow(pane)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Width = size.Width,
+            Height = size.Height,
+            Left = screenPoint.X / dpi.DpiScaleX - 80,
+            Top = screenPoint.Y / dpi.DpiScaleY - 16,
+        };
+        window.Show();
+        window.Activate();
     }
 
     /// <summary>Closes every main window without asking (the caller already did), so the process

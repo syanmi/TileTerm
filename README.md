@@ -22,7 +22,9 @@ each of them — cmd, PowerShell, Git Bash, Claude Code, and anything else that 
 - **Favorites bar**: pin profiles to the title bar; double-click one to open it in a side-by-side split,
   right double-click for a stacked split.
 - **Multiple windows, one set of settings**: launching TileTerm again opens another window of the running app
-  (like VS Code), so a change made in the settings — theme, profiles, favorites — applies to every window at once.
+  (like VS Code), and so does **Ctrl+M**. A change made in the settings — theme, profiles, favorites — applies to
+  every window at once. Drag a tile by its title bar onto another window's tile to dock it there (or onto its middle
+  to swap the two), or drop it outside every window to open it in a window of its own; the program in it keeps running.
 - **Notifications from command-line tools**: when a program in a tile rings the bell (BEL) or sends a
   notification (OSC 9, OSC 777) while its window is in the background — Claude Code finishing a task, say —
   TileTerm flashes and marks the window's taskbar button and shows a Windows notification; clicking the

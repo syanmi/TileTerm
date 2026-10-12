@@ -40,7 +40,8 @@ public abstract class PaneNode
 
 public sealed class LeafNode : PaneNode
 {
-    public TerminalPaneControl Control { get; }
+    /// <summary>The pane in this slot. Replaced only when two windows trade panes (a cross-window swap).</summary>
+    public TerminalPaneControl Control { get; set; }
     public override FrameworkElement Visual => Control;
 
     public LeafNode(TerminalPaneControl control) => Control = control;

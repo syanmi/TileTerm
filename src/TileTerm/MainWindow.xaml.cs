@@ -32,8 +32,20 @@ public partial class MainWindow : Window
     /// <summary>The normal window icon while <see cref="ShowAttention"/> has swapped in the one with the dot.</summary>
     private ImageSource? _iconBeforeAttention;
 
-    public MainWindow()
+    /// <summary>A pane torn off another window, to start this window with instead of a new session.</summary>
+    private readonly TerminalPaneControl? _initialPane;
+
+    /// <summary>Set once the last pane has moved to another window: closing then neither asks nor shuts
+    /// anything down (the sessions live on in the other windows).</summary>
+    private bool _emptied;
+
+    public MainWindow() : this(null)
     {
+    }
+
+    public MainWindow(TerminalPaneControl? initialPane)
+    {
+        _initialPane = initialPane;
         InitializeComponent();
         WindowMaximizeFix.Apply(this);
 
@@ -90,6 +102,17 @@ public partial class MainWindow : Window
         };
 
         Activated += (_, _) => ClearAttention();
+
+        // Tunnels down before the tile's own key handling, so the tile's program never sees it. Ctrl+M is
+        // the same character as Enter (CR) in a terminal, so taking it costs the programs nothing.
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.M && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                App.OpenNewWindow();
+                e.Handled = true;
+            }
+        };
     }
 
     /// <summary>Shows on this window's taskbar button that a tile asked for attention while the window was
@@ -140,9 +163,15 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        var initial = _profileStore.GetDefaultProfile() ?? new ProfileDefinition();
-        _paneManager = new PaneManager(PaneHost, initial);
+        _paneManager = _initialPane is not null
+            ? new PaneManager(PaneHost, _initialPane)
+            : new PaneManager(PaneHost, _profileStore.GetDefaultProfile() ?? new ProfileDefinition());
         _paneManager.LastPaneCloseRequested += () => Close();
+        // Later, not from inside the drag-and-drop that emptied the window.
+        _paneManager.Emptied += () => Dispatcher.BeginInvoke(() => { _emptied = true; Close(); });
+        _paneManager.PaneTornOff += (pane, point) => App.OpenWindowWithPane(pane, point, this);
+        Closed += (_, _) => _paneManager.Unregister();
+        _initialPane?.FocusCanvas();
         RebuildFavoritesBar();
 
         RefreshUpdateButton();   // a version downloaded in an earlier run may still be waiting
@@ -290,6 +319,8 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        if (_emptied) return;
+
         // Applying an update already asked (see ApplyUpdate), so it closes without the second question.
         if (!App.ClosingForUpdate)
         {

@@ -47,6 +47,7 @@ public sealed class TerminalPaneControl : Grid
     private readonly Image _titleIcon;
     private readonly Border _activeBorder;
     private readonly Border _dropZoneOverlay;
+    private readonly Border _draggingOverlay;   // dims this tile while it is being dragged
     private readonly TextBox _imeBox;
     private readonly TerminalScrollBar _scrollBar = new();
     private double _wheelNotches;
@@ -72,6 +73,10 @@ public sealed class TerminalPaneControl : Grid
     /// <summary>Raised when another pane is dropped onto this one — carries the dragged
     /// pane's <see cref="PaneId"/> and where it was released.</summary>
     public event Action<Guid, DropZone>? DockRequested;
+
+    /// <summary>Raised when this pane's title bar was dragged out of every TileTerm window and dropped
+    /// there — carries the drop point in screen pixels. The pane should move into a window of its own.</summary>
+    public event Action<Point>? TearOffRequested;
 
     public TerminalPaneControl(ProfileDefinition profile)
     {
@@ -145,6 +150,16 @@ public sealed class TerminalPaneControl : Grid
         SetRow(_dropZoneOverlay, 0);
         SetRowSpan(_dropZoneOverlay, 2);
         Children.Add(_dropZoneOverlay);
+
+        _draggingOverlay = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(120, 0, 0, 0)),
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+        };
+        SetRow(_draggingOverlay, 0);
+        SetRowSpan(_draggingOverlay, 2);
+        Children.Add(_draggingOverlay);
 
         _imeBox.PreviewTextInput += OnPreviewTextInput;
         _imeBox.PreviewKeyDown += OnPreviewKeyDown;
@@ -303,6 +318,7 @@ public sealed class TerminalPaneControl : Grid
         };
         panel.PreviewMouseMove += OnHeaderPreviewMouseMove;
         panel.GiveFeedback += OnHeaderGiveFeedback;
+        panel.QueryContinueDrag += OnHeaderQueryContinueDrag;
 
         return panel;
     }
@@ -317,8 +333,70 @@ public sealed class TerminalPaneControl : Grid
             return;
 
         _dragStartPoint = null;
-        DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(DragFormat, PaneId), DragDropEffects.Move);
+        _dragCancelled = false;
+
+        // While dragging: the tile itself is dimmed, and a picture of it follows the cursor (see DragGhost).
+        // A tile alone in its window has no split grid around it and can't be torn off.
+        _ghost = new DragGhost(this, canTearOff: Parent is Grid);
+        _draggingOverlay.Visibility = Visibility.Visible;
+        UpdateGhost();
+        DragDropEffects result;
+        try
+        {
+            result = DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(DragFormat, PaneId), DragDropEffects.Move);
+        }
+        finally
+        {
+            _ghost.Close();
+            _ghost = null;
+            _draggingOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        // Nobody took the drop. Released outside every TileTerm window (not just on a spot inside one where a
+        // tile can't go, and not cancelled with Esc), it means "put this tile in a window of its own".
+        if (result == DragDropEffects.None && !_dragCancelled && GetCursorPos(out var cursor)
+            && !IsOverTileTermWindow(cursor))
+            TearOffRequested?.Invoke(new Point(cursor.X, cursor.Y));
     }
+
+    private bool _dragCancelled;
+    private DragGhost? _ghost;
+
+    /// <summary>Asked over and over while the drag goes on, whether or not the cursor is over a drop target,
+    /// so it also keeps the ghost on the cursor outside the windows.</summary>
+    private void OnHeaderQueryContinueDrag(object sender, QueryContinueDragEventArgs e)
+    {
+        if (e.EscapePressed) _dragCancelled = true;
+        UpdateGhost();
+    }
+
+    private void UpdateGhost()
+    {
+        if (_ghost is null || !GetCursorPos(out var cursor)) return;
+        _ghost.Update(new Point(cursor.X, cursor.Y), IsOverTileTermWindow(cursor));
+    }
+
+    private static bool IsOverTileTermWindow(POINT screen)
+    {
+        var root = GetAncestor(WindowFromPoint(screen), GA_ROOT);
+        foreach (Window window in Application.Current.Windows)
+            if (new System.Windows.Interop.WindowInteropHelper(window).Handle == root) return true;
+        return false;
+    }
+
+    private const uint GA_ROOT = 2;
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT point);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(POINT point);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 
     /// <summary>The grab-hand cursor is only for hovering (something you <em>can</em> pick up);
     /// once dragging it goes back to a normal arrow, and — unlike WPF's default — never turns
@@ -355,6 +433,7 @@ public sealed class TerminalPaneControl : Grid
 
         var sourcePaneId = (Guid)e.Data.GetData(DragFormat)!;
         var zone = ComputeDropZone(e.GetPosition(this));
+        e.Effects = DragDropEffects.Move;   // tells the dragging side the drop was taken
         e.Handled = true;
         DockRequested?.Invoke(sourcePaneId, zone);
     }

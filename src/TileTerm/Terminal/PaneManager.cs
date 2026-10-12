@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using TileTerm;
@@ -13,22 +14,52 @@ namespace TileTerm.Terminal;
 /// RLogin-style "one window, many panes" piece of the concept —
 /// <see cref="PaneTree"/> nodes describe the layout, this class is what
 /// actually mutates it and keeps the WPF visual tree in sync.
+///
+/// Panes also move between windows (all of them live in this one process, see <see cref="SingleInstance"/>):
+/// dropping a tile on another window's tile docks or swaps it there, and dropping it outside every window
+/// tears it off into a window of its own. The pane's control — and with it the running session — is handed
+/// over as is, so the program in it keeps running. A window whose last pane leaves raises <see cref="Emptied"/>.
 /// </summary>
 public sealed class PaneManager
 {
+    /// <summary>Every open window's manager, so a drop can find a pane dragged from another window.</summary>
+    private static readonly List<PaneManager> s_all = new();
+
     private readonly ContentControl _host;
-    private PaneNode _root;
+    private PaneNode? _root;   // null only after the window's last pane has moved to another window
     private LeafNode? _active;
 
+    /// <summary>The handlers this manager put on each of its panes' events, so a pane that moves to another
+    /// window can be unhooked from this one.</summary>
+    private readonly Dictionary<TerminalPaneControl, (Action Activated, Action Close, Action<Guid, DropZone> Dock, Action<Point> TearOff)> _hooks = new();
+
     public PaneManager(ContentControl host, ProfileDefinition initialProfile)
+        : this(host, new TerminalPaneControl(initialProfile))
+    {
+    }
+
+    /// <summary>Starts the window with an existing pane, such as one torn off another window.</summary>
+    public PaneManager(ContentControl host, TerminalPaneControl initialPane)
     {
         _host = host;
+        s_all.Add(this);
 
-        var initialLeaf = CreateLeaf(initialProfile);
+        var initialLeaf = Adopt(initialPane);
         _root = initialLeaf;
         _host.Content = initialLeaf.Visual;
         SetActive(initialLeaf);
     }
+
+    /// <summary>Raised when the last pane has moved to another window: the window has nothing left to
+    /// show and should close — without asking, and without shutting anything down.</summary>
+    public event Action? Emptied;
+
+    /// <summary>Raised when a pane was dragged out of every window and dropped there: the caller opens a
+    /// new window for it at <c>screenPoint</c> (physical pixels). The pane is already out of this tree.</summary>
+    public event Action<TerminalPaneControl, Point>? PaneTornOff;
+
+    /// <summary>Call once the window has closed.</summary>
+    public void Unregister() => s_all.Remove(this);
 
     /// <summary>Splits whichever pane is currently active. No-op if there is somehow no active pane.</summary>
     public void SplitActive(SplitDirection direction, ProfileDefinition profile)
@@ -45,25 +76,8 @@ public sealed class PaneManager
     /// <summary>Splits <paramref name="target"/>'s area, opening a new session next to it.</summary>
     public void Split(LeafNode target, SplitDirection direction, ProfileDefinition profile)
     {
-        var newLeaf = CreateLeaf(profile);
-
-        DetachVisual(target.Visual);
-        var grid = BuildSplitGrid(direction, target.Visual, newLeaf.Visual);
-        var splitNode = new SplitNode(direction, target, newLeaf, grid);
-
-        var oldParent = target.Parent;
-        if (oldParent is null)
-        {
-            _root = splitNode;
-            _host.Content = splitNode.Visual;
-        }
-        else
-        {
-            ReplaceChild(oldParent, target, splitNode);
-        }
-
-        target.Parent = splitNode;
-        newLeaf.Parent = splitNode;
+        var newLeaf = Adopt(new TerminalPaneControl(profile));
+        PlaceNextTo(target, newLeaf, direction, newGoesFirst: false);
 
         newLeaf.Control.Loaded += (_, _) => newLeaf.Control.FocusCanvas();
         SetActive(newLeaf);
@@ -82,6 +96,7 @@ public sealed class PaneManager
             return;
         }
 
+        Unhook(target.Control);
         target.Control.Shutdown();
 
         var nextActive = FindFirstLeaf(sibling);
@@ -143,33 +158,14 @@ public sealed class PaneManager
         if (source == target) return;
 
         DetachLeafFromTree(source); // promotes source's old sibling; source.Visual is now parentless
-        DetachVisual(target.Visual);
-
-        var first = sourceGoesFirst ? source : target;
-        var second = sourceGoesFirst ? target : source;
-        var grid = BuildSplitGrid(direction, first.Visual, second.Visual);
-        var splitNode = new SplitNode(direction, first, second, grid);
-
-        var oldParent = target.Parent;
-        if (oldParent is null)
-        {
-            _root = splitNode;
-            _host.Content = splitNode.Visual;
-        }
-        else
-        {
-            ReplaceChild(oldParent, target, splitNode);
-        }
-
-        target.Parent = splitNode;
-        source.Parent = splitNode;
+        PlaceNextTo(target, source, direction, sourceGoesFirst);
 
         SetActive(source);
         source.Control.FocusCanvas();
     }
 
     /// <summary>Finds the pane a drag operation started from, by the id carried in the drag data.</summary>
-    public LeafNode? FindLeafByPaneId(Guid id) => FindLeafByPaneId(_root, id);
+    public LeafNode? FindLeafByPaneId(Guid id) => _root is null ? null : FindLeafByPaneId(_root, id);
 
     private static LeafNode? FindLeafByPaneId(PaneNode node, Guid id) => node switch
     {
@@ -178,8 +174,20 @@ public sealed class PaneManager
         _ => null,
     };
 
+    private LeafNode? FindLeafByControl(TerminalPaneControl control) => _root is null ? null : FindLeafByControl(_root, control);
+
+    private static LeafNode? FindLeafByControl(PaneNode node, TerminalPaneControl control) => node switch
+    {
+        LeafNode leaf => leaf.Control == control ? leaf : null,
+        SplitNode split => FindLeafByControl(split.First, control) ?? FindLeafByControl(split.Second, control),
+        _ => null,
+    };
+
     /// <summary>Disposes every session in the tree. Call once when the window is closing.</summary>
-    public void ShutdownAll() => ShutdownRecursive(_root);
+    public void ShutdownAll()
+    {
+        if (_root is not null) ShutdownRecursive(_root);
+    }
 
     private static void ShutdownRecursive(PaneNode node)
     {
@@ -195,20 +203,46 @@ public sealed class PaneManager
         }
     }
 
-    private LeafNode CreateLeaf(ProfileDefinition profile)
+    /// <summary>Makes <paramref name="control"/> one of this window's panes (not yet placed in the layout)
+    /// and listens to it. Its handlers look the pane up by control rather than holding on to the leaf, so they
+    /// stay right when two windows trade panes.</summary>
+    private LeafNode Adopt(TerminalPaneControl control)
     {
-        var control = new TerminalPaneControl(profile);
-        var leaf = new LeafNode(control);
-        control.Activated += () => SetActive(leaf);
-        control.CloseRequested += () => Close(leaf);
-        control.DockRequested += (sourcePaneId, zone) => HandleDockRequest(leaf, sourcePaneId, zone);
-        return leaf;
+        Hook(control);
+        return new LeafNode(control);
+    }
+
+    private void Hook(TerminalPaneControl control)
+    {
+        Action activated = () => { if (FindLeafByControl(control) is { } l) SetActive(l); };
+        Action close = () => { if (FindLeafByControl(control) is { } l) Close(l); };
+        Action<Guid, DropZone> dock = (sourcePaneId, zone) => { if (FindLeafByControl(control) is { } l) HandleDockRequest(l, sourcePaneId, zone); };
+        Action<Point> tearOff = point => { if (FindLeafByControl(control) is { } l) TearOff(l, point); };
+        control.Activated += activated;
+        control.CloseRequested += close;
+        control.DockRequested += dock;
+        control.TearOffRequested += tearOff;
+        _hooks[control] = (activated, close, dock, tearOff);
+    }
+
+    private void Unhook(TerminalPaneControl control)
+    {
+        if (!_hooks.Remove(control, out var hooks)) return;
+        control.Activated -= hooks.Activated;
+        control.CloseRequested -= hooks.Close;
+        control.DockRequested -= hooks.Dock;
+        control.TearOffRequested -= hooks.TearOff;
     }
 
     private void HandleDockRequest(LeafNode target, Guid sourcePaneId, DropZone zone)
     {
         var source = FindLeafByPaneId(sourcePaneId);
-        if (source is null || source == target) return;
+        if (source == target) return;
+        if (source is null)
+        {
+            HandleDropFromOtherWindow(target, sourcePaneId, zone);
+            return;
+        }
 
         switch (zone)
         {
@@ -230,6 +264,99 @@ public sealed class PaneManager
         }
     }
 
+    /// <summary>A tile from another window was dropped on <paramref name="target"/>: the middle trades the
+    /// two panes between the windows, an edge moves the dragged pane over and docks it there.</summary>
+    private void HandleDropFromOtherWindow(LeafNode target, Guid sourcePaneId, DropZone zone)
+    {
+        PaneManager? owner = null;
+        LeafNode? source = null;
+        foreach (var manager in s_all)
+        {
+            if (manager == this) continue;
+            source = manager.FindLeafByPaneId(sourcePaneId);
+            if (source is not null) { owner = manager; break; }
+        }
+        if (owner is null || source is null) return;
+
+        if (zone == DropZone.Center)
+        {
+            TradePanes(owner, source, this, target);
+        }
+        else
+        {
+            var control = owner.Release(source);
+            var moved = Adopt(control);
+            var direction = zone is DropZone.Left or DropZone.Right ? SplitDirection.Right : SplitDirection.Down;
+            PlaceNextTo(target, moved, direction, newGoesFirst: zone is DropZone.Left or DropZone.Top);
+            SetActive(moved);
+            moved.Control.FocusCanvas();
+        }
+
+        Window.GetWindow(target.Control)?.Activate();
+    }
+
+    /// <summary>Swaps the panes of two leaves in different windows: each window keeps its layout, and the
+    /// two slots exchange their panes (and sessions).</summary>
+    private static void TradePanes(PaneManager aOwner, LeafNode a, PaneManager bOwner, LeafNode b)
+    {
+        var aControl = a.Control;
+        var bControl = b.Control;
+        var aSlot = SlotOf(a);
+        var bSlot = SlotOf(b);
+
+        aOwner.Unhook(aControl);
+        bOwner.Unhook(bControl);
+        DetachVisual(aControl);
+        DetachVisual(bControl);
+
+        // Each window takes the other's pane into the slot its own pane left.
+        a.Control = bControl;
+        b.Control = aControl;
+        aOwner.Hook(bControl);
+        bOwner.Hook(aControl);
+        aOwner.PlaceInSlot(aSlot, bControl);
+        bOwner.PlaceInSlot(bSlot, aControl);
+
+        // Both windows' active pane changed under them; reset the markers without touching the other window.
+        aOwner._active = null;
+        aOwner.SetActive(a);
+        bOwner._active = null;
+        bOwner.SetActive(b);
+        aControl.FocusCanvas();
+    }
+
+    /// <summary>Takes <paramref name="leaf"/>'s pane out of this window to hand it to another one; its
+    /// session keeps running. If it was the last pane, the window is now empty (<see cref="Emptied"/>).</summary>
+    private TerminalPaneControl Release(LeafNode leaf)
+    {
+        var control = leaf.Control;
+        Unhook(control);
+
+        var sibling = DetachLeafFromTree(leaf);
+        if (_active == leaf) _active = null;
+        if (sibling is null)
+        {
+            // The sole pane: nothing to collapse into.
+            DetachVisual(control);
+            _root = null;
+            Emptied?.Invoke();
+        }
+        else if (_active is null)
+        {
+            SetActive(FindFirstLeaf(sibling));
+        }
+        return control;
+    }
+
+    /// <summary>The "drop outside every window" gesture: moves the pane into a window of its own. Does
+    /// nothing for a window's only pane, which would just be moving the window.</summary>
+    private void TearOff(LeafNode leaf, Point screenPoint)
+    {
+        if (leaf.Parent is null) return;
+        var control = Release(leaf);
+        PaneTornOff?.Invoke(control, screenPoint);
+    }
+
     private void SetActive(LeafNode leaf)
     {
         if (_active == leaf) return;
@@ -244,6 +371,48 @@ public sealed class PaneManager
         SplitNode split => FindFirstLeaf(split.First),
         _ => throw new InvalidOperationException("Unknown PaneNode type."),
     };
+
+    /// <summary>Where a node sits: its parent split (null = the window's root) and its cell in that split's grid.</summary>
+    private readonly record struct Slot(SplitNode? Parent, int Column, int Row);
+
+    private static Slot SlotOf(PaneNode node) => new(node.Parent, Grid.GetColumn(node.Visual), Grid.GetRow(node.Visual));
+
+    private void PlaceInSlot(Slot slot, FrameworkElement visual)
+    {
+        if (slot.Parent is null)
+        {
+            _host.Content = visual;
+            return;
+        }
+        Grid.SetColumn(visual, slot.Column);
+        Grid.SetRow(visual, slot.Row);
+        slot.Parent.GridVisual.Children.Add(visual);
+    }
+
+    /// <summary>Splits <paramref name="target"/>'s area between it and <paramref name="newLeaf"/>, which
+    /// must not be in the tree. Shared by splitting, docking and moving a pane in from another window.</summary>
+    private void PlaceNextTo(LeafNode target, LeafNode newLeaf, SplitDirection direction, bool newGoesFirst)
+    {
+        DetachVisual(target.Visual);
+        var first = newGoesFirst ? newLeaf : target;
+        var second = newGoesFirst ? target : newLeaf;
+        var grid = BuildSplitGrid(direction, first.Visual, second.Visual);
+        var splitNode = new SplitNode(direction, first, second, grid);
+
+        var oldParent = target.Parent;
+        if (oldParent is null)
+        {
+            _root = splitNode;
+            _host.Content = splitNode.Visual;
+        }
+        else
+        {
+            ReplaceChild(oldParent, target, splitNode);
+        }
+
+        target.Parent = splitNode;
+        newLeaf.Parent = splitNode;
+    }
 
     /// <summary>
     /// Removes <paramref name="leaf"/> from the tree, collapsing its parent split so the
@@ -313,6 +482,9 @@ public sealed class PaneManager
 
         if (parent.First == oldChild) parent.First = newChild;
         else parent.Second = newChild;
+        // Without this a split nested by Split/DockPane had no parent, and taking a pane out of it (closing,
+        // moving it away) promoted the sibling to the window's root — dropping every other pane.
+        newChild.Parent = parent;
     }
 
     private static Grid BuildSplitGrid(SplitDirection direction, FrameworkElement first, FrameworkElement second)
