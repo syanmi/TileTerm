@@ -163,6 +163,10 @@ public sealed class TerminalPaneControl : Grid
 
         _imeBox.PreviewTextInput += OnPreviewTextInput;
         _imeBox.PreviewKeyDown += OnPreviewKeyDown;
+        _imeBox.PreviewKeyUp += (_, e) =>
+        {
+            if (e.Key is Key.LeftCtrl or Key.RightCtrl) _canvas.RefreshLinkHover();
+        };
         _imeBox.GotKeyboardFocus += (_, _) => Activated?.Invoke();
         TextCompositionManager.AddPreviewTextInputStartHandler(_imeBox, (_, _) =>
         {
@@ -184,6 +188,7 @@ public sealed class TerminalPaneControl : Grid
             PlaceImeBox();
         });
         _canvas.PreviewMouseDown += (_, _) => _imeBox.Focus();
+        _canvas.LinkClicked += OpenLink;
         _canvas.MouseRightButtonUp += (_, e) =>
         {
             // Like the Windows console: right-click copies the selection, or pastes when nothing is selected.
@@ -544,6 +549,22 @@ public sealed class TerminalPaneControl : Grid
         }
     }
 
+    /// <summary>Opens a Ctrl+clicked link in the default browser. Only http and https: an address on
+    /// screen is whatever the program printed, and other schemes can start arbitrary handlers.</summary>
+    private void OpenLink(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageDialog.Show(Window.GetWindow(this), $"リンクを開けませんでした:\n{url}\n\n{ex.Message}", "TileTerm");
+        }
+    }
+
     private async void RestartSession()
     {
         Session?.Dispose();
@@ -618,6 +639,7 @@ public sealed class TerminalPaneControl : Grid
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
         _lastKey = e.Key == Key.ImeProcessed ? e.ImeProcessedKey : e.Key;
+        if (e.Key is Key.LeftCtrl or Key.RightCtrl && !e.IsRepeat) _canvas.RefreshLinkHover();
 
         // While an IME composition is in progress, WPF reports every key it intercepts
         // (including Enter/Escape/Space/arrows used to convert and confirm candidates) as

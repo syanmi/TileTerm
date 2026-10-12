@@ -59,6 +59,9 @@ public sealed class TerminalCanvas : FrameworkElement
     /// (lines of history above the screen, the top visible line, rows on screen). Drives the scroll bar.</summary>
     public event Action<int, int, int>? ViewChanged;
 
+    /// <summary>Fired when a link on screen is Ctrl+clicked, with its address.</summary>
+    public event Action<string>? LinkClicked;
+
     public TerminalCanvas()
     {
         // Keyboard focus lives in the hosting pane's IME TextBox, not here.
@@ -144,6 +147,8 @@ public sealed class TerminalCanvas : FrameworkElement
         lock (terminal)
         {
             var buffer = terminal.Buffer;
+            // Output or scrolling may have moved the text under the mouse since the link was found.
+            if (_hoverCell is { } hover) _hoverLink = LinkAt(terminal, hover.Col, hover.Row);
             DrawCells(dc, terminal);
 
             cursorRect = new Rect(buffer.X * _cellWidth, buffer.Y * _cellHeight, _cellWidth, _cellHeight);
@@ -154,6 +159,8 @@ public sealed class TerminalCanvas : FrameworkElement
             atBottom = buffer.IsAtBottom;
             view = (buffer.YBase, buffer.YDisp, terminal.Rows);
         }
+
+        UpdateMouseCursor();
 
         if (cursorRect != _lastCursorRect)
         {
@@ -214,6 +221,7 @@ public sealed class TerminalCanvas : FrameworkElement
             if (line is null) continue;
 
             int cols = Math.Min(terminal.Cols, line.Length);
+            var (linkStart, linkEnd) = HoverSpanOn(index);
             for (int col = 0; col < cols; col++)
             {
                 var cell = line[col];
@@ -232,7 +240,7 @@ public sealed class TerminalCanvas : FrameworkElement
                 style.Fg = fg;
                 style.Bg = bg;
                 style.Bold = attrs.IsBold();
-                style.Underline = attrs.IsUnderline();
+                style.Underline = attrs.IsUnderline() || (col >= linkStart && col < linkEnd);
                 style.Span = Math.Max(cell.Width, 1);
                 style.Text = cell.Content;
             }
@@ -546,6 +554,18 @@ public sealed class TerminalCanvas : FrameworkElement
         if (terminal is null) return;
 
         var cell = CellAt(e.GetPosition(this));
+        if (e.ClickCount == 1 && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            string? url;
+            lock (terminal) url = LinkAt(terminal, cell.Col, cell.Row)?.Url;
+            if (url is not null)
+            {
+                LinkClicked?.Invoke(url);
+                e.Handled = true;
+                return;
+            }
+        }
+
         lock (terminal)
         {
             var selection = terminal.Selection;
@@ -567,6 +587,7 @@ public sealed class TerminalCanvas : FrameworkElement
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
+        UpdateLinkHover(e.GetPosition(this));
         if (!_pressed) return;
 
         var point = e.GetPosition(this);
@@ -577,6 +598,118 @@ public sealed class TerminalCanvas : FrameworkElement
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e) => FinishSelecting();
 
     protected override void OnLostMouseCapture(MouseEventArgs e) => FinishSelecting();
+
+    protected override void OnMouseLeave(MouseEventArgs e) => UpdateLinkHover(null);
+
+    // Links: Ctrl+hover underlines the link under the mouse and shows the hand cursor, Ctrl+click opens it
+    // (Windows Terminal and VS Code do the same; a plain click stays free for selecting).
+    private (int Col, int Row)? _hoverCell;   // the cell the mouse is on, while it is on a link with Ctrl held
+    private HoverLink? _hoverLink;
+
+    /// <summary>A link found on screen: its address and the cells it covers, one span per buffer line
+    /// (a long URL wraps onto several).</summary>
+    private sealed record HoverLink(string Url, List<(int Line, int Start, int End)> Spans)
+    {
+        public bool SameAs(HoverLink? other) =>
+            other is not null && other.Url == Url && other.Spans.Count == Spans.Count && other.Spans[0] == Spans[0];
+    }
+
+    /// <summary>Looks again at the cell under the mouse; the pane calls this when Ctrl goes down or up,
+    /// so the underline follows the key without the mouse having to move.</summary>
+    public void RefreshLinkHover() => UpdateLinkHover(IsMouseOver ? Mouse.GetPosition(this) : null);
+
+    private void UpdateLinkHover(Point? point)
+    {
+        var terminal = Terminal;
+        HoverLink? link = null;
+        (int Col, int Row) cell = default;
+        if (terminal is not null && point is { } p && !_pressed && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            cell = CellAt(p);
+            lock (terminal) link = LinkAt(terminal, cell.Col, cell.Row);
+        }
+
+        bool changed = link is null ? _hoverLink is not null : !link.SameAs(_hoverLink);
+        _hoverCell = link is null ? null : cell;
+        _hoverLink = link;
+        if (!changed) return;
+        UpdateMouseCursor();
+        InvalidateVisual();
+    }
+
+    private void UpdateMouseCursor()
+    {
+        var cursor = _hoverLink is null ? Cursors.IBeam : Cursors.Hand;
+        if (Cursor != cursor) Cursor = cursor;
+    }
+
+    /// <summary>The columns of buffer line <paramref name="line"/> the hovered link covers (empty if none).</summary>
+    private (int Start, int End) HoverSpanOn(int line)
+    {
+        if (_hoverLink is { } link)
+            foreach (var span in link.Spans)
+                if (span.Line == line) return (span.Start, span.End);
+        return (0, 0);
+    }
+
+    /// <summary>
+    /// The link covering a screen cell, if any. The caller holds the terminal lock. A line the terminal
+    /// wrapped is read together with the lines it continues and continues into, so a URL longer than
+    /// the screen is wide is still one link.
+    /// </summary>
+    private static HoverLink? LinkAt(XTerm.Terminal terminal, int col, int row)
+    {
+        var buffer = terminal.Buffer;
+        var lines = buffer.Lines;
+        int index = buffer.YDisp + row;
+        if (index < 0 || index >= lines.Length || lines[index] is null) return null;
+
+        const int MaxWrappedLines = 32;   // how far a link may run; bounds the work on a long wrapped line
+        int first = index;
+        while (first > 0 && index - first < MaxWrappedLines && lines[first]!.IsWrapped && lines[first - 1] is not null) first--;
+        int last = index;
+        while (last + 1 < lines.Length && last - index < MaxWrappedLines && lines[last + 1] is { IsWrapped: true }) last++;
+
+        // The text of those lines, and for each character of it the cell it came from.
+        var text = new System.Text.StringBuilder();
+        var cells = new List<(int Line, int Col, int Span)>();
+        for (int i = first; i <= last; i++)
+        {
+            var line = lines[i]!;
+            int cols = Math.Min(terminal.Cols, line.Length);
+            for (int c = 0; c < cols; c++)
+            {
+                var cell = line[c];
+                if (cell.Width == 0) continue;   // second half of a wide character
+                var content = string.IsNullOrEmpty(cell.Content) ? " " : cell.Content;
+                foreach (var ch in content)
+                {
+                    text.Append(ch);
+                    cells.Add((i, c, Math.Max(cell.Width, 1)));
+                }
+            }
+        }
+
+        foreach (var (start, length) in LinkDetector.Find(text.ToString()))
+        {
+            bool hit = false;
+            for (int k = start; k < start + length && !hit; k++)
+                hit = cells[k].Line == index && col >= cells[k].Col && col < cells[k].Col + cells[k].Span;
+            if (!hit) continue;
+
+            var spans = new List<(int Line, int Start, int End)>();
+            for (int k = start; k < start + length; k++)
+            {
+                var (line, c, span) = cells[k];
+                if (spans.Count > 0 && spans[^1].Line == line)
+                    spans[^1] = (line, spans[^1].Start, c + span);
+                else
+                    spans.Add((line, c, c + span));
+            }
+            return new HoverLink(text.ToString(start, length), spans);
+        }
+        return null;
+    }
 
     private void ExtendSelection((int Col, int Row) cell)
     {
