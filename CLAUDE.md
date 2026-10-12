@@ -80,7 +80,7 @@ GitHub Releasesで配布する。パッケージは**Velopack**(.NET向けのイ
 
 ### レンダリング方式
 
-`TerminalCanvas`（`FrameworkElement` を継承したカスタムコントロール、`src/TileTerm/Terminal/TerminalCanvas.cs`）が `XTerm.Terminal.Buffer` を1セルずつ読み取り、`DrawingContext.DrawText` で等幅フォント(Consolas)のグリッドとして描画している。256色/RGBカラーの変換は `AnsiPalette.cs` に実装。現状は「まず正しく動く」を優先したシンプルな逐セル描画で、パフォーマンス最適化（同一属性の連続セルをまとめて1回のDrawTextにする等）は未実施。
+`TerminalCanvas`（`FrameworkElement` を継承したカスタムコントロール、`src/TileTerm/Terminal/TerminalCanvas.cs`）が `XTerm.Terminal.Buffer` を読み取り、等幅フォント(Consolas)のグリッドとして描画している。256色/RGBカラーの変換は `AnsiPalette.cs` に実装。M29で高速化し、各行を「同じ背景色の並びを1つの矩形」「同じ色・太字・下線のConsolasの文字の並びを1つの`GlyphRun`(セル幅ちょうどの送り幅)」で描く。全角文字・Consolasにない文字は1文字ずつ`FormattedText`(キャッシュあり)、ブロック文字・罫線は`CellGlyphs`の矩形で描く(詳細はM29)。
 
 ## アーキテクチャ（M2時点）
 
@@ -347,6 +347,14 @@ OSデフォルトの装飾（`WindowStyle="None"` + `WindowChrome`）を捨て�
   - **タスクバーの点滅**: `FlashWindowEx(FLASHW_TRAY | FLASHW_TIMERNOFG)`。Windows Terminalなどと同じWindows標準の表示で、数回点滅したあと、ウィンドウが前面に来るまで強調が残る(色と回数はOSが決める)
   - **通知マーク**: 候補をclaude.aiのアーティファクト「TileTerm 通知マーク候補」(https://claude.ai/artifact/BXTjPFjRLB1CfTDyVcYtnV 。1回目の10案と、2回目の赤い点の位置の4案)で比べてもらい、「小さな赤い点をアイコンの右上に」を採用。**`TaskbarItemInfo.Overlay`(オーバーレイ)はWindowsが常にアイコンの右下に置き、位置を変えられない**ため、オーバーレイはやめて、通知の間だけ**ウィンドウのアイコン(`Window.Icon`)を差し替える**方式にした(`AttentionIcon.cs`)。`Assets/TileTerm.ico`の各サイズのフレームに赤い点(`#E81123`、直径はアイコンの9/24、右上の角に接する)を描き、PNG圧縮のフレームを並べた.icoをメモリ上で組み立てて`IconBitmapDecoder`で読む(WPFにはicoのエンコーダーがない。`Window.Icon`はフレームの`Decoder`から用途ごとに最適なサイズを選ぶので、`BitmapFrame.Create`で包み直さずデコーダーのフレームをそのまま渡す)。ウィンドウがアクティブになると元のアイコンに戻す。Alt+Tabのアイコンにも点が付く
   - 確認済み(Debugビルド、テスト用の`profiles.json`で「6秒後にBEL」のタイルを開いてUIAで最小化、`WM_GETICON`でWindowsに渡っているアイコンを取り出して画像で確認。`profiles.json`は起動直後に元へ戻した): 通知前は通常のアイコン、BELの後は大(48px)・小(24px)とも右上に赤い点、ウィンドウを元に戻すと通常のアイコンに戻る。設定ダイアログに「通知」カテゴリがないこと(UIA+`PrintWindow`)。**未確認**(ROADMAPの「未確認・要検証」): タスクバーのボタンに実際に点が表示されること(特にピン留めしたボタンで、Windowsがウィンドウのアイコンを使うか)、点滅の見た目
+
+- ✅ **M29: ウィンドウのサイズ変更時のがたつき対策と描画の高速化**（2026-10-12 完了、未公開。ROADMAPのR1）
+  - きっかけ: 「上の辺をつかんでウィンドウの高さを変えると、ウィンドウ全体がびくびく揺れる」(Claude Codeを分割して表示中)。上の辺のサイズ変更は、新しいフレームの描画が間に合わないと古い画面がずれて見える(WPFでよく知られた症状)ので、1フレームの描画を軽くする方向で対処した
+  - **計測方法**: 環境変数で有効になる一時的なログ(描画時間、`lock`の待ち時間、リサイズの処理時間)を入れ、Claude Codeを2分割したDebugビルドの上の辺を`SetWindowPos`で6pxずつ60ステップ動かした(計測コードはコミットしていない)。`lock`の待ちやリサイズ処理はほぼ0msで、時間は描画そのもの(1回3〜13ms、各タイルが1ステップに2回)だった
+  - **余分なリサイズ通知をやめた**(`TerminalSession.Resize`、先に単独でコミット): レイアウトは1pxごとにサイズを通知するが、行数・列数が変わらなくても毎回ConPTYへリサイズを伝えていた。ConPTYはそのたびに画面を送り直し、タイルがもう一度描き直していた。同じサイズなら何もしないようにして、描画回数262→178、描画時間の合計850→385ms
+  - **描画の高速化**(`TerminalCanvas.DrawCells`): 1セルごとに`FormattedText`を作って`DrawText`していたのをやめ、各行を2段階で描く。①背景は同じ色の並びを1つの矩形に ②文字は、色・太字・下線が同じConsolasの文字の並びを1つの`GlyphRun`にし、送り幅をセル幅に固定(グリッドからずれない)。空白は並びの途中なら続け、末尾の空白は描かない。全角文字・Consolasにない文字(`CharacterToGlyphMap`にない)・複数文字のセルは従来どおり1文字ずつ`FormattedText`で描くが、(文字,太字,下線,色)でキャッシュする(上限4096で全消去)。ブロック文字・罫線は`CellGlyphs.Handles`で判定して従来どおり矩形。`GlyphRun`はフォントファイル1つしか使えないので、フォールバックの一覧ではなく`Consolas`単体の`GlyphTypeface`を使う(無ければ全文字が従来の経路)。下線は並び全体に1本の矩形をピクセルにそろえて引く(以前は文字ごとの下線で空白の所が途切れていた)。結果: 同じ計測で描画1回の平均2.16→0.64ms、最大13.67→4.63ms
+  - **出力ごとの再描画要求をまとめた**(`TerminalPaneControl`): 出力の読み取りのたびに`BeginInvoke(InvalidateVisual)`を積んでいたのを、未処理の要求が1つあれば積まないようにした
+  - 確認済み: 色・太字・下線・反転・256色/トゥルーカラー・日本語混在・罫線・ブロック文字・記号を出す見本のタイルを、変更前(git worktreeで別にビルド)と変更後でキャプチャして比較し、文字の位置・形が同じであること(差はClearTypeのにじみの細部と、下線がつながったことだけ)。実際のマウス操作でのがたつきは、ユーザーが高速化したビルドで確認し「だいぶ改善した」。残る揺れへの次の手(ドラッグ中はConPTYへのリサイズを保留する、フレーム全体の計測、変わった行だけの再描画)は未着手
 
 ## 今後の予定(ROADMAP.md)
 

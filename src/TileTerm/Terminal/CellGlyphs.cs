@@ -30,6 +30,9 @@ internal static class CellGlyphs
     // Quadrant bits: 1 upper-left, 2 upper-right, 4 lower-left, 8 lower-right (U+2596-259F).
     private static readonly int[] Quadrants = { 4, 8, 1, 1 | 4 | 8, 1 | 8, 1 | 2 | 4, 1 | 2 | 8, 2, 2 | 4, 2 | 4 | 8 };
 
+    /// <summary>Whether <see cref="TryDraw"/> draws this character (as rectangles, not a font glyph).</summary>
+    public static bool Handles(char c) => c is >= '▀' and <= '▟' || BoxArms.ContainsKey(c);
+
     /// <summary>Draws <paramref name="text"/> into <paramref name="cell"/> if it is one of the characters
     /// this class handles; returns false (drawing nothing) otherwise.</summary>
     public static bool TryDraw(DrawingContext dc, string text, Rect cell, Brush fg, double dpi)

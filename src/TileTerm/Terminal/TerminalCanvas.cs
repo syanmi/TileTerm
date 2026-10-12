@@ -181,10 +181,29 @@ public sealed class TerminalCanvas : FrameworkElement
         RaiseViewChanged(view.Max, view.Value, view.Rows);
     }
 
+    /// <summary>One screen cell with its colors resolved, as <see cref="DrawCells"/> works on a row.</summary>
+    private struct CellStyle
+    {
+        public Color Fg, Bg;
+        public bool Bold, Underline;
+        public int Span;        // 1, 2 for a wide character, 0 for the second half of one
+        public string? Text;
+    }
+
+    private CellStyle[] _row = Array.Empty<CellStyle>();
+
+    /// <summary>
+    /// Draws the visible screen. Each row goes in two passes, so the draw calls scale with the number of
+    /// color changes rather than the number of cells: backgrounds as one rectangle per run of equal color,
+    /// then the text — runs of Latin characters that share a style as one <see cref="GlyphRun"/> placed on
+    /// the cell grid (<see cref="FlushRun"/>). Characters the glyph runs can't take (wide CJK characters,
+    /// glyphs Consolas lacks, block/box characters drawn as rectangles) are drawn one at a time.
+    /// </summary>
     private void DrawCells(DrawingContext dc, XTerm.Terminal terminal)
     {
         var buffer = terminal.Buffer;
         var selection = terminal.Selection.HasSelection ? terminal.Selection : null;
+        if (_row.Length < terminal.Cols) _row = new CellStyle[terminal.Cols];
 
         for (int row = 0; row < terminal.Rows; row++)
         {
@@ -197,6 +216,8 @@ public sealed class TerminalCanvas : FrameworkElement
             for (int col = 0; col < cols; col++)
             {
                 var cell = line[col];
+                ref var style = ref _row[col];
+                style.Span = cell.Width;
                 if (cell.Width == 0) continue; // second half of a wide (CJK) character
 
                 var attrs = cell.Attributes;
@@ -207,30 +228,152 @@ public sealed class TerminalCanvas : FrameworkElement
                 if (selection is not null && selection.IsCellSelected(col, row))
                     bg = SelectionColor;
 
-                int span = Math.Max(cell.Width, 1);
-                var cellRect = new Rect(col * _cellWidth, row * _cellHeight, span * _cellWidth, _cellHeight);
+                style.Fg = fg;
+                style.Bg = bg;
+                style.Bold = attrs.IsBold();
+                style.Underline = attrs.IsUnderline();
+                style.Span = Math.Max(cell.Width, 1);
+                style.Text = cell.Content;
+            }
 
-                if (bg != AnsiPalette.DefaultBackground)
-                    dc.DrawRectangle(BrushFor(bg), null, cellRect);
+            DrawBackgrounds(dc, row, cols);
+            DrawText(dc, row, cols);
+        }
+    }
 
-                string? text = cell.Content;
-                if (string.IsNullOrWhiteSpace(text)) continue;
-
-                DrawGlyph(dc, text, cellRect, span, BrushFor(fg), attrs.IsBold(), attrs.IsUnderline());
+    private void DrawBackgrounds(DrawingContext dc, int row, int cols)
+    {
+        double y = row * _cellHeight;
+        int start = -1;
+        Color color = default;
+        for (int col = 0; col <= cols; col++)
+        {
+            // A wide character's second half has the first half's background.
+            if (col < cols && _row[col].Span == 0) continue;
+            bool end = col == cols || _row[col].Bg != color;
+            if (end && start >= 0 && color != AnsiPalette.DefaultBackground)
+                dc.DrawRectangle(BrushFor(color), null, new Rect(start * _cellWidth, y, (col - start) * _cellWidth, _cellHeight));
+            if (col < cols && (start < 0 || end))
+            {
+                start = col;
+                color = _row[col].Bg;
             }
         }
     }
 
-    private void DrawGlyph(DrawingContext dc, string text, Rect cellRect, int span, SolidColorBrush fgBrush, bool bold, bool underline)
+    private void DrawText(DrawingContext dc, int row, int cols)
     {
+        double y = row * _cellHeight;
+        for (int col = 0; col < cols; col++)
+        {
+            ref var style = ref _row[col];
+            if (style.Span == 0) continue;
+            var text = style.Text;
+
+            if (string.IsNullOrEmpty(text) || text == " ")
+            {
+                // A space carries on the run (it is just one more advance) but never starts one.
+                if (_run.Count > 0 && style.Underline == _runUnderline) AddToRun(SpaceGlyph(_runBold), ink: false);
+                else FlushRun(dc, y);
+                continue;
+            }
+
+            if (style.Span == 1 && text.Length == 1 && !CellGlyphs.Handles(text[0])
+                && GlyphsFor(style.Bold) is { } glyphs && glyphs.CharacterToGlyphMap.TryGetValue(text[0], out var glyph))
+            {
+                if (_run.Count > 0 && (style.Fg != _runFg || style.Bold != _runBold || style.Underline != _runUnderline))
+                    FlushRun(dc, y);
+                if (_run.Count == 0)
+                {
+                    _runStart = col;
+                    _runFg = style.Fg;
+                    _runBold = style.Bold;
+                    _runUnderline = style.Underline;
+                }
+                AddToRun(glyph, ink: true);
+                continue;
+            }
+
+            FlushRun(dc, y);
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            var cellRect = new Rect(col * _cellWidth, y, style.Span * _cellWidth, _cellHeight);
+            DrawGlyph(dc, text, cellRect, style.Span, style.Fg, style.Bold, style.Underline);
+        }
+        FlushRun(dc, y);
+    }
+
+    // The text run being collected by DrawText: glyphs of consecutive cells that share a style.
+    private readonly List<ushort> _run = new();
+    private int _runStart, _runInk;   // first column; glyphs up to the last non-space one
+    private Color _runFg;
+    private bool _runBold, _runUnderline;
+
+    private static readonly GlyphTypeface? RegularGlyphs = LoadGlyphs(FontWeights.Normal);
+    private static readonly GlyphTypeface? BoldGlyphs = LoadGlyphs(FontWeights.Bold);
+
+    /// <summary>Consolas itself (not the fallback list in <see cref="Font"/>): a glyph run uses one font
+    /// file. Null if it is not installed, and then every character goes through <see cref="DrawGlyph"/>.</summary>
+    private static GlyphTypeface? LoadGlyphs(FontWeight weight) =>
+        new Typeface(new FontFamily("Consolas"), FontStyles.Normal, weight, FontStretches.Normal)
+            .TryGetGlyphTypeface(out var glyphs) ? glyphs : null;
+
+    private static GlyphTypeface? GlyphsFor(bool bold) => bold ? BoldGlyphs : RegularGlyphs;
+
+    private static ushort SpaceGlyph(bool bold) =>
+        GlyphsFor(bold)!.CharacterToGlyphMap.TryGetValue(' ', out var glyph) ? glyph : (ushort)0;
+
+    private void AddToRun(ushort glyph, bool ink)
+    {
+        _run.Add(glyph);
+        if (ink) _runInk = _run.Count;
+    }
+
+    private void FlushRun(DrawingContext dc, double y)
+    {
+        if (_runInk > 0)
+        {
+            var glyphs = GlyphsFor(_runBold)!;
+            var indices = _run.GetRange(0, _runInk);   // trailing spaces dropped: nothing to draw
+            var advances = new double[_runInk];
+            Array.Fill(advances, _cellWidth);
+            double x = _runStart * _cellWidth;
+            var origin = new Point(x, y + _baseline);
+            var brush = BrushFor(_runFg);
+            dc.DrawGlyphRun(brush, new GlyphRun(glyphs, 0, false, FontSize, (float)_pixelsPerDip, indices, origin,
+                advances, null, null, null, null, null, null));
+
+            if (_runUnderline)
+            {
+                // On whole pixels, or the line straddles two rows of pixels and comes out as a grey smear.
+                double top = Math.Round((origin.Y - glyphs.UnderlinePosition * FontSize) * _pixelsPerDip) / _pixelsPerDip;
+                double thickness = Math.Max(1, Math.Round(glyphs.UnderlineThickness * FontSize * _pixelsPerDip)) / _pixelsPerDip;
+                dc.DrawRectangle(brush, null, new Rect(x, top, _runInk * _cellWidth, thickness));
+            }
+        }
+        _run.Clear();
+        _runInk = 0;
+    }
+
+    /// <summary>Text objects for the characters drawn one at a time (mostly Japanese), kept between
+    /// renders: a screen of Japanese text would otherwise build hundreds of them every frame.</summary>
+    private readonly Dictionary<(string Text, bool Bold, bool Underline, Color Fg), FormattedText> _formatted = new();
+
+    private void DrawGlyph(DrawingContext dc, string text, Rect cellRect, int span, Color fg, bool bold, bool underline)
+    {
+        var fgBrush = BrushFor(fg);
         if (CellGlyphs.TryDraw(dc, text, cellRect, fgBrush, _pixelsPerDip)) return;
 
-        var formatted = new FormattedText(
-            text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-            bold ? BoldFace : RegularFace, FontSize, fgBrush, _pixelsPerDip);
-
-        if (underline)
-            formatted.SetTextDecorations(TextDecorations.Underline);
+        var key = (text, bold, underline, fg);
+        if (!_formatted.TryGetValue(key, out var formatted))
+        {
+            if (_formatted.Count > 4096) _formatted.Clear();
+            formatted = new FormattedText(
+                text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                bold ? BoldFace : RegularFace, FontSize, fgBrush, _pixelsPerDip);
+            if (underline)
+                formatted.SetTextDecorations(TextDecorations.Underline);
+            _formatted[key] = formatted;
+        }
 
         // A wide character's glyph is narrower than its two cells: center it, so a run of them
         // is evenly spaced. And line the baseline up with the Latin text's, whichever font
@@ -268,7 +411,7 @@ public sealed class TerminalCanvas : FrameworkElement
 
             var cellRect = new Rect(col * _cellWidth, y, span * _cellWidth, _cellHeight);
             dc.DrawRectangle(bgBrush, null, cellRect);
-            DrawGlyph(dc, text.Substring(i, length), cellRect, span, fgBrush, bold: false, underline: false);
+            DrawGlyph(dc, text.Substring(i, length), cellRect, span, AnsiPalette.DefaultForeground, bold: false, underline: false);
 
             col += span;
             i += length;

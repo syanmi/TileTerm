@@ -50,6 +50,7 @@ public sealed class TerminalPaneControl : Grid
     private readonly TextBox _imeBox;
     private readonly TerminalScrollBar _scrollBar = new();
     private double _wheelNotches;
+    private int _repaintQueued;   // 1 while a repaint for new output is waiting on the dispatcher
     private Point? _dragStartPoint;
     private bool _composing;
     private int _compositionLength;   // characters of the IME box's text that are still being composed
@@ -432,7 +433,16 @@ public sealed class TerminalPaneControl : Grid
         Session = new TerminalSession(cols, rows);
         _canvas.Terminal = Session.Terminal;
 
-        Session.OutputReceived += () => Dispatcher.BeginInvoke(() => _canvas.InvalidateVisual());
+        // Output comes in many small reads (a full-screen redraw is dozens); one queued repaint covers them all.
+        Session.OutputReceived += () =>
+        {
+            if (System.Threading.Interlocked.Exchange(ref _repaintQueued, 1) == 1) return;
+            Dispatcher.BeginInvoke(() =>
+            {
+                System.Threading.Volatile.Write(ref _repaintQueued, 0);
+                _canvas.InvalidateVisual();
+            });
+        };
         Session.Exited += code => Dispatcher.BeginInvoke(() =>
             _titleText.Text = $"{Profile.Name} (終了 code={code})");
         var session = Session;
