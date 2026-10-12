@@ -71,6 +71,10 @@ internal static class TileScheme
     public static readonly Color TerminalFg = C(0xE5E5E5);
     public static readonly Color TerminalCursor = Color.FromArgb(160, 220, 220, 220);
 
+    /// <summary>Web addresses found in the output (drawn underlined, and opened with Ctrl+click). The
+    /// link blue of VS Code's dark theme: plainly a link, and readable on the black background.</summary>
+    public static readonly Color TerminalLink = C(0x3794FF);
+
     /// <summary>The 16 standard ANSI colors (index 0-15), xterm's default palette.</summary>
     public static readonly Color[] Ansi16 =
     {

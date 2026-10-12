@@ -148,6 +148,7 @@ public sealed class TerminalCanvas : FrameworkElement
         {
             var buffer = terminal.Buffer;
             // Output or scrolling may have moved the text under the mouse since the link was found.
+            _screenLinks = FindLinks(terminal, buffer.YDisp, buffer.YDisp + terminal.Rows - 1);
             if (_hoverCell is { } hover) _hoverLink = LinkAt(terminal, hover.Col, hover.Row);
             DrawCells(dc, terminal);
 
@@ -221,7 +222,7 @@ public sealed class TerminalCanvas : FrameworkElement
             if (line is null) continue;
 
             int cols = Math.Min(terminal.Cols, line.Length);
-            var (linkStart, linkEnd) = HoverSpanOn(index);
+            CollectRowLinks(index);
             for (int col = 0; col < cols; col++)
             {
                 var cell = line[col];
@@ -234,13 +235,19 @@ public sealed class TerminalCanvas : FrameworkElement
                 var bg = AnsiPalette.Resolve(attrs.GetBgColor(), attrs.GetBgColorMode(), AnsiPalette.DefaultBackground);
                 if (attrs.IsInverse())
                     (fg, bg) = (bg, fg);
-                if (selection is not null && selection.IsCellSelected(col, row))
+                bool selected = selection is not null && selection.IsCellSelected(col, row);
+                if (selected)
                     bg = SelectionColor;
+                bool inLink = _rowLinks.Count > 0 && InRowLink(col);
+                // A link reads as one: blue and underlined, whatever color the program gave it — except
+                // selected, where blue on the selection's blue would be hard to read.
+                if (inLink && !selected)
+                    fg = TileScheme.TerminalLink;
 
                 style.Fg = fg;
                 style.Bg = bg;
                 style.Bold = attrs.IsBold();
-                style.Underline = attrs.IsUnderline() || (col >= linkStart && col < linkEnd);
+                style.Underline = attrs.IsUnderline() || inLink;
                 style.Span = Math.Max(cell.Width, 1);
                 style.Text = cell.Content;
             }
@@ -601,8 +608,8 @@ public sealed class TerminalCanvas : FrameworkElement
 
     protected override void OnMouseLeave(MouseEventArgs e) => UpdateLinkHover(null);
 
-    // Links: Ctrl+hover underlines the link under the mouse and shows the hand cursor, Ctrl+click opens it
-    // (Windows Terminal and VS Code do the same; a plain click stays free for selecting).
+    // Links: every URL on screen is drawn blue and underlined (FindLinks, each render); with Ctrl held the mouse turns
+    // into a hand over one, and Ctrl+click opens it (as in Windows Terminal and VS Code; a plain click stays free for selecting).
     private (int Col, int Row)? _hoverCell;   // the cell the mouse is on, while it is on a link with Ctrl held
     private HoverLink? _hoverLink;
 
@@ -615,7 +622,7 @@ public sealed class TerminalCanvas : FrameworkElement
     }
 
     /// <summary>Looks again at the cell under the mouse; the pane calls this when Ctrl goes down or up,
-    /// so the underline follows the key without the mouse having to move.</summary>
+    /// so the hand cursor follows the key without the mouse having to move.</summary>
     public void RefreshLinkHover() => UpdateLinkHover(IsMouseOver ? Mouse.GetPosition(this) : null);
 
     private void UpdateLinkHover(Point? point)
@@ -643,39 +650,74 @@ public sealed class TerminalCanvas : FrameworkElement
         if (Cursor != cursor) Cursor = cursor;
     }
 
-    /// <summary>The columns of buffer line <paramref name="line"/> the hovered link covers (empty if none).</summary>
-    private (int Start, int End) HoverSpanOn(int line)
+    /// <summary>The links on screen as of the last render (drawn blue and underlined).</summary>
+    private List<HoverLink> _screenLinks = new();
+
+    private readonly List<(int Start, int End)> _rowLinks = new();
+
+    /// <summary>Fills <see cref="_rowLinks"/> with the columns of buffer line <paramref name="line"/> that
+    /// links on screen cover.</summary>
+    private void CollectRowLinks(int line)
     {
-        if (_hoverLink is { } link)
+        _rowLinks.Clear();
+        foreach (var link in _screenLinks)
             foreach (var span in link.Spans)
-                if (span.Line == line) return (span.Start, span.End);
-        return (0, 0);
+                if (span.Line == line) _rowLinks.Add((span.Start, span.End));
     }
 
-    /// <summary>
-    /// The link covering a screen cell, if any. The caller holds the terminal lock. A line the terminal
-    /// wrapped is read together with the lines it continues and continues into, so a URL longer than
-    /// the screen is wide is still one link.
-    /// </summary>
-    private static HoverLink? LinkAt(XTerm.Terminal terminal, int col, int row)
+    private bool InRowLink(int col)
     {
-        var buffer = terminal.Buffer;
-        var lines = buffer.Lines;
-        int index = buffer.YDisp + row;
-        if (index < 0 || index >= lines.Length || lines[index] is null) return null;
+        foreach (var (start, end) in _rowLinks)
+            if (col >= start && col < end) return true;
+        return false;
+    }
+
+    /// <summary>The link covering a screen cell, if any. The caller holds the terminal lock.</summary>
+    private HoverLink? LinkAt(XTerm.Terminal terminal, int col, int row)
+    {
+        int index = terminal.Buffer.YDisp + row;
+        foreach (var link in FindLinks(terminal, index, index))
+            foreach (var span in link.Spans)
+                if (span.Line == index && col >= span.Start && col < span.End) return link;
+        return null;
+    }
+
+    private readonly System.Text.StringBuilder _linkText = new();
+    private readonly List<(int Line, int Col, int Span)> _linkCells = new();
+
+    /// <summary>
+    /// The links on buffer lines <paramref name="from"/> to <paramref name="to"/>. The caller holds the
+    /// terminal lock. Lines the terminal wrapped are read together with the lines they continue and
+    /// continue into, so a URL longer than the screen is wide is still one link.
+    /// </summary>
+    private List<HoverLink> FindLinks(XTerm.Terminal terminal, int from, int to)
+    {
+        var found = new List<HoverLink>();
+        var lines = terminal.Buffer.Lines;
+        from = Math.Max(from, 0);
+        to = Math.Min(to, lines.Length - 1);
+        if (from > to) return found;
 
         const int MaxWrappedLines = 32;   // how far a link may run; bounds the work on a long wrapped line
-        int first = index;
-        while (first > 0 && index - first < MaxWrappedLines && lines[first]!.IsWrapped && lines[first - 1] is not null) first--;
-        int last = index;
-        while (last + 1 < lines.Length && last - index < MaxWrappedLines && lines[last + 1] is { IsWrapped: true }) last++;
+        int first = from;
+        while (first > 0 && from - first < MaxWrappedLines && lines[first] is { IsWrapped: true } && lines[first - 1] is not null) first--;
+        int last = to;
+        while (last + 1 < lines.Length && last - to < MaxWrappedLines && lines[last + 1] is { IsWrapped: true }) last++;
 
-        // The text of those lines, and for each character of it the cell it came from.
-        var text = new System.Text.StringBuilder();
-        var cells = new List<(int Line, int Col, int Span)>();
+        // The text of those lines, and for each character of it the cell it came from. Lines that are not
+        // continued are separated by a newline, which no link runs across.
+        var text = _linkText.Clear();
+        var cells = _linkCells;
+        cells.Clear();
         for (int i = first; i <= last; i++)
         {
-            var line = lines[i]!;
+            var line = lines[i];
+            if (line is null) continue;
+            if (text.Length > 0 && !line.IsWrapped)
+            {
+                text.Append('\n');
+                cells.Add((-1, 0, 0));
+            }
             int cols = Math.Min(terminal.Cols, line.Length);
             for (int c = 0; c < cols; c++)
             {
@@ -690,13 +732,9 @@ public sealed class TerminalCanvas : FrameworkElement
             }
         }
 
-        foreach (var (start, length) in LinkDetector.Find(text.ToString()))
+        var all = text.ToString();
+        foreach (var (start, length) in LinkDetector.Find(all))
         {
-            bool hit = false;
-            for (int k = start; k < start + length && !hit; k++)
-                hit = cells[k].Line == index && col >= cells[k].Col && col < cells[k].Col + cells[k].Span;
-            if (!hit) continue;
-
             var spans = new List<(int Line, int Start, int End)>();
             for (int k = start; k < start + length; k++)
             {
@@ -706,9 +744,9 @@ public sealed class TerminalCanvas : FrameworkElement
                 else
                     spans.Add((line, c, c + span));
             }
-            return new HoverLink(text.ToString(start, length), spans);
+            found.Add(new HoverLink(all.Substring(start, length), spans));
         }
-        return null;
+        return found;
     }
 
     private void ExtendSelection((int Col, int Row) cell)

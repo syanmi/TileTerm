@@ -20,6 +20,7 @@ public static partial class LinkDetector
     public static List<(int Start, int Length)> Find(string text)
     {
         var links = new List<(int, int)>();
+        if (!text.Contains("://", StringComparison.Ordinal)) return links;   // most screens have none: skip the regex
         foreach (Match match in UrlPattern().Matches(text))
         {
             int length = TrimmedLength(text.AsSpan(match.Index, match.Length));
