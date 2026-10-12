@@ -195,9 +195,10 @@ public sealed class TerminalCanvas : FrameworkElement
     /// <summary>
     /// Draws the visible screen. Each row goes in two passes, so the draw calls scale with the number of
     /// color changes rather than the number of cells: backgrounds as one rectangle per run of equal color,
-    /// then the text — runs of Latin characters that share a style as one <see cref="GlyphRun"/> placed on
-    /// the cell grid (<see cref="FlushRun"/>). Characters the glyph runs can't take (wide CJK characters,
-    /// glyphs Consolas lacks, block/box characters drawn as rectangles) are drawn one at a time.
+    /// then the text — runs of characters that share a font and a style as one <see cref="GlyphRun"/> placed
+    /// on the cell grid (<see cref="FlushRun"/>), Japanese included (Claude Code's screens are mostly
+    /// Japanese, and drawing those one character at a time made a frame take ~10 ms). Only characters none of
+    /// the fonts have, and block/box characters drawn as rectangles, are drawn one at a time.
     /// </summary>
     private void DrawCells(DrawingContext dc, XTerm.Terminal terminal)
     {
@@ -273,24 +274,30 @@ public sealed class TerminalCanvas : FrameworkElement
             if (string.IsNullOrEmpty(text) || text == " ")
             {
                 // A space carries on the run (it is just one more advance) but never starts one.
-                if (_run.Count > 0 && style.Underline == _runUnderline) AddToRun(SpaceGlyph(_runBold), ink: false);
-                else FlushRun(dc, y);
+                if (_run.Count > 0 && style.Underline == _runUnderline && _runFace!.CharacterToGlyphMap.TryGetValue(' ', out var space))
+                    AddToRun(space, 1, 0, ink: false);
+                else
+                    FlushRun(dc, y);
                 continue;
             }
 
-            if (style.Span == 1 && text.Length == 1 && !CellGlyphs.Handles(text[0])
-                && GlyphsFor(style.Bold) is { } glyphs && glyphs.CharacterToGlyphMap.TryGetValue(text[0], out var glyph))
+            if (TryGetCodePoint(text, out int codePoint) && !(text.Length == 1 && CellGlyphs.Handles(text[0]))
+                && FindGlyph(codePoint, style.Bold) is ({ } face, var glyph))
             {
-                if (_run.Count > 0 && (style.Fg != _runFg || style.Bold != _runBold || style.Underline != _runUnderline))
+                if (_run.Count > 0 && (face != _runFace || style.Fg != _runFg || style.Bold != _runBold || style.Underline != _runUnderline))
                     FlushRun(dc, y);
                 if (_run.Count == 0)
                 {
                     _runStart = col;
+                    _runFace = face;
                     _runFg = style.Fg;
                     _runBold = style.Bold;
                     _runUnderline = style.Underline;
                 }
-                AddToRun(glyph, ink: true);
+                // A wide character's glyph is narrower than its two cells: center it, so a run of them is
+                // evenly spaced.
+                double offset = style.Span > 1 ? Math.Max(0, (style.Span * _cellWidth - face.AdvanceWidths[glyph] * FontSize) / 2) : 0;
+                AddToRun(glyph, style.Span, offset, ink: true);
                 continue;
             }
 
@@ -302,60 +309,93 @@ public sealed class TerminalCanvas : FrameworkElement
         FlushRun(dc, y);
     }
 
-    // The text run being collected by DrawText: glyphs of consecutive cells that share a style.
+    private static bool TryGetCodePoint(string text, out int codePoint)
+    {
+        if (text.Length == 1 && !char.IsSurrogate(text[0])) { codePoint = text[0]; return true; }
+        if (text.Length == 2 && char.IsSurrogatePair(text[0], text[1])) { codePoint = char.ConvertToUtf32(text[0], text[1]); return true; }
+        codePoint = 0;
+        return false;
+    }
+
+    // The text run being collected by DrawText: glyphs of consecutive cells that share a font and a style.
     private readonly List<ushort> _run = new();
-    private int _runStart, _runInk;   // first column; glyphs up to the last non-space one
+    private readonly List<double> _runAdvances = new();
+    private readonly List<Point> _runOffsets = new();
+    private int _runStart, _runCells;
+    private int _runInk, _runInkCells;   // glyphs (and cells) up to the last non-space one
+    private GlyphTypeface? _runFace;
     private Color _runFg;
     private bool _runBold, _runUnderline;
 
-    private static readonly GlyphTypeface? RegularGlyphs = LoadGlyphs(FontWeights.Normal);
-    private static readonly GlyphTypeface? BoldGlyphs = LoadGlyphs(FontWeights.Bold);
+    /// <summary>The fonts of <see cref="Font"/>, each loaded on its own: a glyph run uses a single font file,
+    /// so the fallback that <see cref="FormattedText"/> does across the list is done here per character
+    /// (<see cref="FindGlyph"/>) — Consolas for Latin, the Japanese fonts for the rest. Fonts that are not
+    /// installed are left out.</summary>
+    private static readonly GlyphTypeface[] RegularChain = LoadChain(FontWeights.Normal);
+    private static readonly GlyphTypeface[] BoldChain = LoadChain(FontWeights.Bold);
 
-    /// <summary>Consolas itself (not the fallback list in <see cref="Font"/>): a glyph run uses one font
-    /// file. Null if it is not installed, and then every character goes through <see cref="DrawGlyph"/>.</summary>
-    private static GlyphTypeface? LoadGlyphs(FontWeight weight) =>
-        new Typeface(new FontFamily("Consolas"), FontStyles.Normal, weight, FontStretches.Normal)
-            .TryGetGlyphTypeface(out var glyphs) ? glyphs : null;
+    private static GlyphTypeface[] LoadChain(FontWeight weight)
+    {
+        var faces = new List<GlyphTypeface>();
+        foreach (var name in Font.Source.Split(','))
+        {
+            var typeface = new Typeface(new FontFamily(name.Trim()), FontStyles.Normal, weight, FontStretches.Normal);
+            if (typeface.TryGetGlyphTypeface(out var face)) faces.Add(face);
+        }
+        return faces.ToArray();
+    }
 
-    private static GlyphTypeface? GlyphsFor(bool bold) => bold ? BoldGlyphs : RegularGlyphs;
+    /// <summary>The first font in the list that has <paramref name="codePoint"/>, and its glyph; (null, 0) when
+    /// none does (the character is then drawn by <see cref="DrawGlyph"/>, which falls back to the system's fonts).</summary>
+    private static (GlyphTypeface? Face, ushort Glyph) FindGlyph(int codePoint, bool bold)
+    {
+        foreach (var face in bold ? BoldChain : RegularChain)
+            if (face.CharacterToGlyphMap.TryGetValue(codePoint, out var glyph)) return (face, glyph);
+        return (null, 0);
+    }
 
-    private static ushort SpaceGlyph(bool bold) =>
-        GlyphsFor(bold)!.CharacterToGlyphMap.TryGetValue(' ', out var glyph) ? glyph : (ushort)0;
-
-    private void AddToRun(ushort glyph, bool ink)
+    private void AddToRun(ushort glyph, int span, double offset, bool ink)
     {
         _run.Add(glyph);
-        if (ink) _runInk = _run.Count;
+        _runAdvances.Add(span * _cellWidth);
+        _runOffsets.Add(new Point(offset, 0));
+        _runCells += span;
+        if (!ink) return;
+        _runInk = _run.Count;
+        _runInkCells = _runCells;
     }
 
     private void FlushRun(DrawingContext dc, double y)
     {
         if (_runInk > 0)
         {
-            var glyphs = GlyphsFor(_runBold)!;
-            var indices = _run.GetRange(0, _runInk);   // trailing spaces dropped: nothing to draw
-            var advances = new double[_runInk];
-            Array.Fill(advances, _cellWidth);
+            var face = _runFace!;
             double x = _runStart * _cellWidth;
             var origin = new Point(x, y + _baseline);
             var brush = BrushFor(_runFg);
-            dc.DrawGlyphRun(brush, new GlyphRun(glyphs, 0, false, FontSize, (float)_pixelsPerDip, indices, origin,
-                advances, null, null, null, null, null, null));
+            // Trailing spaces are dropped: nothing to draw.
+            dc.DrawGlyphRun(brush, new GlyphRun(face, 0, false, FontSize, (float)_pixelsPerDip, _run.GetRange(0, _runInk), origin,
+                _runAdvances.GetRange(0, _runInk), _runOffsets.GetRange(0, _runInk), null, null, null, null, null));
 
             if (_runUnderline)
             {
                 // On whole pixels, or the line straddles two rows of pixels and comes out as a grey smear.
-                double top = Math.Round((origin.Y - glyphs.UnderlinePosition * FontSize) * _pixelsPerDip) / _pixelsPerDip;
-                double thickness = Math.Max(1, Math.Round(glyphs.UnderlineThickness * FontSize * _pixelsPerDip)) / _pixelsPerDip;
-                dc.DrawRectangle(brush, null, new Rect(x, top, _runInk * _cellWidth, thickness));
+                double top = Math.Round((origin.Y - face.UnderlinePosition * FontSize) * _pixelsPerDip) / _pixelsPerDip;
+                double thickness = Math.Max(1, Math.Round(face.UnderlineThickness * FontSize * _pixelsPerDip)) / _pixelsPerDip;
+                dc.DrawRectangle(brush, null, new Rect(x, top, _runInkCells * _cellWidth, thickness));
             }
         }
         _run.Clear();
+        _runAdvances.Clear();
+        _runOffsets.Clear();
+        _runCells = 0;
         _runInk = 0;
+        _runInkCells = 0;
+        _runFace = null;
     }
 
-    /// <summary>Text objects for the characters drawn one at a time (mostly Japanese), kept between
-    /// renders: a screen of Japanese text would otherwise build hundreds of them every frame.</summary>
+    /// <summary>Text objects for the characters drawn one at a time (symbols and emoji none of the fonts of
+    /// <see cref="Font"/> have, and IME composition text), kept between renders.</summary>
     private readonly Dictionary<(string Text, bool Bold, bool Underline, Color Fg), FormattedText> _formatted = new();
 
     private void DrawGlyph(DrawingContext dc, string text, Rect cellRect, int span, Color fg, bool bold, bool underline)
