@@ -143,9 +143,16 @@ public sealed class TerminalSession : IDisposable
     /// <summary>Sends plain text (as UTF-8) to the child process.</summary>
     public Task SendTextAsync(string text) => SendRawAsync(Encoding.UTF8.GetBytes(text));
 
+    /// <summary>The size last passed to <see cref="Resize"/>. Layout reports the size on every pixel of a window
+    /// resize, but the grid changes only every cell; telling ConPTY the same size again makes it repaint the
+    /// screen anyway, and the program in the tile (Claude Code, ...) redraws on top of that.</summary>
+    private (int Cols, int Rows) _size;
+
     public void Resize(int cols, int rows)
     {
         if (cols <= 0 || rows <= 0) return;
+        if ((cols, rows) == _size) return;
+        _size = (cols, rows);
         lock (Terminal) Terminal.Resize(cols, rows);
         _pty?.Resize(cols, rows);
     }
