@@ -5,6 +5,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using TileTerm.Terminal;
 
@@ -25,6 +26,8 @@ public partial class MainWindow : Window
     /// <summary>The settings dialog, if open. There is only ever one for the whole app — opening it from
     /// another window brings the existing one forward — so two dialogs can't hold conflicting edits.</summary>
     private static SettingsWindow? s_settingsWindow;
+
+    private static ImageSource? s_attentionBadge;
 
     public MainWindow()
     {
@@ -82,6 +85,40 @@ public partial class MainWindow : Window
             UpdateService.Instance.PendingChanged -= RefreshUpdateButton;
             _profileStore.Changed -= RebuildFavoritesBar;
         };
+
+        Activated += (_, _) => ClearAttentionBadge();
+    }
+
+    /// <summary>Marks this window's taskbar button (a red dot over the icon) to show that a tile asked for
+    /// attention while the window was in the background; cleared when the window is activated.
+    /// See <see cref="AttentionService"/>.</summary>
+    public void ShowAttentionBadge()
+    {
+        TaskbarItemInfo ??= new TaskbarItemInfo();
+        TaskbarItemInfo.Overlay = s_attentionBadge ??= CreateAttentionBadge();
+        TaskbarItemInfo.Description = "TileTerm - 通知があります";
+    }
+
+    private void ClearAttentionBadge()
+    {
+        if (TaskbarItemInfo is null) return;
+        TaskbarItemInfo.Overlay = null;
+        TaskbarItemInfo.Description = "";
+    }
+
+    /// <summary>A red dot with a white rim (so it stands out against any icon), as a bitmap: the taskbar
+    /// overlay is converted to an icon, which works best from pixels.</summary>
+    private static ImageSource CreateAttentionBadge()
+    {
+        const int size = 32;
+        var visual = new DrawingVisual();
+        using (var dc = visual.RenderOpen())
+            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(0xE8, 0x11, 0x23)), new Pen(Brushes.White, 3),
+                new Point(size / 2.0, size / 2.0), size / 2.0 - 2, size / 2.0 - 2);
+        var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(visual);
+        bitmap.Freeze();
+        return bitmap;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)

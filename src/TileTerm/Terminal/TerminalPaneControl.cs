@@ -435,6 +435,11 @@ public sealed class TerminalPaneControl : Grid
         Session.OutputReceived += () => Dispatcher.BeginInvoke(() => _canvas.InvalidateVisual());
         Session.Exited += code => Dispatcher.BeginInvoke(() =>
             _titleText.Text = $"{Profile.Name} (終了 code={code})");
+        var session = Session;
+        session.AttentionRequested += attention => Dispatcher.BeginInvoke(() =>
+        {
+            if (Session == session) AttentionService.Raise(this, attention);
+        });
 
         _titleText.Text = Profile.Name;
         _imeBox.Focus();
@@ -460,13 +465,26 @@ public sealed class TerminalPaneControl : Grid
         await StartSessionAsync();
     }
 
-    public void SetActive(bool active) =>
+    public void SetActive(bool active)
+    {
+        IsActivePane = active;
         _activeBorder.BorderBrush = active ? Theme.PaneActiveBorder : Brushes.Transparent;
+    }
+
+    /// <summary>True while this is its window's active pane (the one the title bar's buttons act on).</summary>
+    public bool IsActivePane { get; private set; }
+
+    /// <summary>True once <see cref="Shutdown"/> has run: the pane is gone from its window.</summary>
+    public bool IsShutDown { get; private set; }
 
     public void FocusCanvas() => _imeBox.Focus();
 
     /// <summary>Tears down the backing session. Call once when this pane is removed from the tree.</summary>
-    public void Shutdown() => Session?.Dispose();
+    public void Shutdown()
+    {
+        IsShutDown = true;
+        Session?.Dispose();
+    }
 
     private void OnPreviewTextInput(object sender, TextCompositionEventArgs e)
     {

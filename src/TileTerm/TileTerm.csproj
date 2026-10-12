@@ -12,6 +12,8 @@
     <ApplicationIcon>Assets\TileTerm.ico</ApplicationIcon>
     <!-- Program.Main (not the XAML-generated one) starts the app: Velopack must run first, see Program.cs. -->
     <StartupObject>TileTerm.Program</StartupObject>
+    <!-- ToastNotifications.cs calls the WinRT toast API through COM vtables (function pointers). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

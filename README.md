@@ -23,6 +23,11 @@ each of them — cmd, PowerShell, Git Bash, Claude Code, and anything else that 
   right double-click for a stacked split.
 - **Multiple windows, one set of settings**: launching TileTerm again opens another window of the running app
   (like VS Code), so a change made in the settings — theme, profiles, favorites — applies to every window at once.
+- **Notifications from command-line tools**: when a program in a tile rings the bell (BEL) or sends a
+  notification (OSC 9, OSC 777) while its window is in the background — Claude Code finishing a task, say —
+  TileTerm marks the window's taskbar button and shows a Windows notification; it can also bring the window to
+  the front. Configure it under **Settings → 通知**. For Claude Code, set its notification channel (`/config`)
+  to `terminal_bell` or `iterm2`.
 - **Japanese input (IME)**: text being composed is shown at the cursor.
 - **Dark and light themes**: switch in the settings, no restart needed. The tiles themselves stay dark in
   both themes.
@@ -41,7 +46,7 @@ needed.
 | Kind | File | Use it when |
 |---|---|---|
 | Installer | `TileTerm-win-Setup.exe` | You want a normal install. One click, for the current user only: no administrator rights, installed under `%LOCALAPPDATA%\TileTerm`, with Start menu and desktop shortcuts. Uninstall from Windows Settings → Apps. |
-| Portable | `TileTerm-win-Portable.zip` | You want to run it without installing. Unzip anywhere and run `TileTerm.exe`; everything stays in that folder, so deleting it leaves no trace. |
+| Portable | `TileTerm-win-Portable.zip` | You want to run it without installing. Unzip anywhere and run `TileTerm.exe`; everything stays in that folder, so deleting it leaves no trace — except, once a notification has been shown, the name Windows displays for it (a registry key under `HKCU\Software\Classes\AppUserModelId\syanmi.TileTerm`). |
 
 The latest installer is always at
 `https://github.com/syanmi/TileTerm/releases/latest/download/TileTerm-win-Setup.exe`.

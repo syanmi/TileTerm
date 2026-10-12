@@ -9,6 +9,9 @@ using XTerm.Options;
 
 namespace TileTerm.Terminal;
 
+/// <summary>A program's request for attention: a plain bell, or a notification with optional title/body text.</summary>
+public readonly record struct TerminalAttention(bool IsBell, string? Title, string? Body);
+
 /// <summary>
 /// Owns one console-app session end to end: the child process (spawned behind
 /// a real Windows pseudo console via Porta.Pty/ConPTY) and the XTerm.NET
@@ -47,7 +50,25 @@ public sealed class TerminalSession : IDisposable
         // by the terminal itself; those replies must be sent back to the
         // child process, not displayed.
         Terminal.DataReceived += (_, e) => _ = SendRawAsync(Encoding.UTF8.GetBytes(e.Data));
+
+        // A program asking for attention: a plain BEL, or a desktop-notification sequence. OSC 9
+        // (iTerm2's, e.g. Claude Code's "iterm2" notification channel) is parsed by XTerm.NET itself —
+        // it does not report OSC 9;4 progress or 9;9 working-directory reports as notifications.
+        // OSC 777 (rxvt/Ghostty "notify;title;body") is handled here, though Windows' built-in ConPTY
+        // currently drops it before it reaches us.
+        Terminal.BellRang += (_, _) => AttentionRequested?.Invoke(new TerminalAttention(IsBell: true, null, null));
+        Terminal.NotificationReceived += (_, e) => AttentionRequested?.Invoke(new TerminalAttention(false, null, e.Text));
+        Terminal.OscReceived += (_, e) =>
+        {
+            if (e.Code != 777 || !e.Data.StartsWith("notify;", StringComparison.Ordinal)) return;
+            var parts = e.Data.Split(';', 3);
+            AttentionRequested?.Invoke(new TerminalAttention(false, parts.Length > 1 ? parts[1] : null, parts.Length > 2 ? parts[2] : null));
+        };
     }
+
+    /// <summary>Raised (on the background reader thread, while the terminal is locked — so handlers must
+    /// only hand it off) when the program rings the bell or sends a desktop notification.</summary>
+    public event Action<TerminalAttention>? AttentionRequested;
 
     public async Task StartAsync(ProfileDefinition profile)
     {
