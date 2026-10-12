@@ -30,13 +30,19 @@ if not exist "%EXE%" (
 
 echo.
 echo Build OK. Launching TileTerm...
-echo (this window will come back when you close the app)
+echo (this window closes with the app; it stays open only on a non-zero exit code)
 echo.
 
 "%EXE%"
+set "APP_EXIT=%ERRORLEVEL%"
 
+rem Normal exit closes this window too. Keep it open on a crash / non-zero
+rem exit so the exit code (and any console output) can still be read.
+rem (No parenthesized block here: a ")" inside an echo would end the block early.)
+if "%APP_EXIT%"=="0" goto :done
 echo.
-echo TileTerm exited. (exit code: %ERRORLEVEL%)
+echo TileTerm exited abnormally. (exit code: %APP_EXIT%)
 pause
 
-endlocal
+:done
+endlocal & exit /b %APP_EXIT%
